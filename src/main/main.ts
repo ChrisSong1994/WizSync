@@ -42,7 +42,7 @@ const timers: Map<string, NodeJS.Timeout> = new Map()
 
 function createWindow() {
   win = new BrowserWindow({
-    icon: path.join(process.env.VITE_PUBLIC || '', 'assets/logo.png'),
+    icon: path.join(process.env.VITE_PUBLIC || '', 'assets/icon-512.png'),
     width: 1000,
     height: 750,
     webPreferences: {
