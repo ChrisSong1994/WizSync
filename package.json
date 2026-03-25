@@ -19,6 +19,31 @@
     "react-dom": "^18.2.0",
     "tailwind-merge": "^2.2.2"
   },
+  "build": {
+    "appId": "com.wizsync.app",
+    "productName": "WizSync",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "public/assets/icon-512.png",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "public/assets/icon-512.png",
+      "target": [
+        "nsis"
+      ]
+    }
+  },
   "devDependencies": {
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
