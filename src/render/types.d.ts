@@ -8,6 +8,15 @@ export interface SyncTask {
   direction: 'bidirectional' | 'sourceToTarget' | 'targetToSource'
   status: 'idle' | 'syncing' | 'error'
   lastSyncTime?: string
+  useParallel?: boolean
+  sourceStats?: { size: number; count: number }
+  targetStats?: { size: number; count: number }
+}
+
+export interface DiffResult {
+  sourceOnly: { path: string; size: number }[]
+  targetOnly: { path: string; size: number }[]
+  different: { path: string; sourceSize: number; targetSize: number; sourceMtime: number; targetMtime: number }[]
 }
 
 export interface ElectronAPI {
@@ -17,8 +26,9 @@ export interface ElectronAPI {
   startSync: (id: string) => Promise<boolean>
   stopSync: (id: string) => Promise<boolean>
   selectDirectory: () => Promise<string | null>
-  onSyncStatus: (callback: (status: { id: string, status: SyncTask['status'], lastSyncTime?: string }) => void) => void
-  onSyncLog: (callback: (log: { id: string, log: string }) => void) => void
+  compareDirectories: (id: string) => Promise<DiffResult>
+  onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; sourceStats?: any; targetStats?: any }) => void) => void
+  onSyncLog: (callback: (data: { id: string; log: string }) => void) => void
 }
 
 declare global {

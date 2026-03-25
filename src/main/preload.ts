@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startSync: (id: string) => ipcRenderer.invoke('start-sync', id),
   stopSync: (id: string) => ipcRenderer.invoke('stop-sync', id),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
+  compareDirectories: (id: string) => ipcRenderer.invoke('compare-directories', id),
   onSyncStatus: (callback: any) => ipcRenderer.on('sync-status', (_event, value) => callback(value)),
   onSyncLog: (callback: any) => ipcRenderer.on('sync-log', (_event, value) => callback(value)),
 })
