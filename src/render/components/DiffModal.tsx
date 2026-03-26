@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   X,
   FileSearch,
@@ -8,6 +8,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   ArrowDownLeft,
+  ShieldAlert,
 } from "lucide-react";
 import { SyncTask, DiffResult } from "../types";
 import { formatSize } from "../utils";
@@ -25,7 +26,16 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   diffData,
   onClose,
 }) => {
+  const [ignorePatterns, setIgnorePatterns] = useState<string[]>([]);
   const taskName = tasks.find((t) => t.id === taskId)?.name;
+
+  useEffect(() => {
+    const fetchPatterns = async () => {
+      const patterns = await window.electronAPI.getIgnorePatterns();
+      setIgnorePatterns(patterns);
+    };
+    fetchPatterns();
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -52,108 +62,128 @@ export const DiffModal: React.FC<DiffModalProps> = ({
               <Loader2 size={40} className="animate-spin text-blue-500" />
               <p className="font-medium">正在扫描文件差异...</p>
             </div>
-          ) : diffData.sourceOnly.length === 0 &&
-            diffData.targetOnly.length === 0 &&
-            diffData.different.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center py-12">
-              <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-4">
-                <CheckCircle2 size={32} />
-              </div>
-              <h3 className="text-lg font-bold text-slate-800">目录已同步</h3>
-              <p className="text-slate-500 mt-1">源目录与目标目录内容完全一致。</p>
-            </div>
           ) : (
             <>
-              {/* 差异文件 */}
-              {diffData.different.length > 0 && (
-                <section>
-                  <h3 className="text-sm font-bold text-amber-600 mb-3 flex items-center gap-2">
-                    <FileCode size={16} />
-                    内容不一致 ({diffData.different.length})
-                  </h3>
-                  <div className="space-y-2">
-                    {diffData.different.map((file, i) => (
-                      <div
-                        key={i}
-                        className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex items-center justify-between group hover:border-amber-200 transition-colors"
-                      >
-                        <span className="text-sm font-mono text-slate-700 truncate max-w-md">
-                          {file.path}
-                        </span>
-                        <div className="flex items-center gap-4 text-[11px]">
-                          <div className="text-right">
-                            <div className="text-slate-400 uppercase font-bold text-[12px]">
-                              源端
-                            </div>
-                            <div className="text-slate-600 font-medium">
-                              {formatSize(file.sourceSize)}
+              {/* 差异文件内容 */}
+              {diffData.sourceOnly.length === 0 &&
+              diffData.targetOnly.length === 0 &&
+              diffData.different.length === 0 ? (
+                <div className="flex flex-col items-center justify-center text-center py-12">
+                  <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-4">
+                    <CheckCircle2 size={32} />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-800">目录已同步</h3>
+                  <p className="text-slate-500 mt-1">源目录与目标目录内容完全一致。</p>
+                </div>
+              ) : (
+                <>
+                  {/* 差异文件 */}
+                  {diffData.different.length > 0 && (
+                    <section>
+                      <h3 className="text-sm font-bold text-amber-600 mb-3 flex items-center gap-2">
+                        <FileCode size={16} />
+                        内容不一致 ({diffData.different.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {diffData.different.map((file, i) => (
+                          <div
+                            key={i}
+                            className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex items-center justify-between group hover:border-amber-200 transition-colors"
+                          >
+                            <span className="text-sm font-mono text-slate-700 truncate max-w-md">
+                              {file.path}
+                            </span>
+                            <div className="flex items-center gap-4 text-[11px]">
+                              <div className="text-right">
+                                <div className="text-slate-400 uppercase font-bold text-[9px]">源端</div>
+                                <div className="text-slate-600 font-medium">{formatSize(file.sourceSize)}</div>
+                              </div>
+                              <ArrowRight size={12} className="text-slate-300" />
+                              <div className="text-left">
+                                <div className="text-slate-400 uppercase font-bold text-[9px]">目标端</div>
+                                <div className="text-slate-600 font-medium">{formatSize(file.targetSize)}</div>
+                              </div>
                             </div>
                           </div>
-                          <ArrowRight size={12} className="text-slate-300" />
-                          <div className="text-left">
-                            <div className="text-slate-400 uppercase font-bold text-[12px]">
-                              目标端
-                            </div>
-                            <div className="text-slate-600 font-medium">
-                              {formatSize(file.targetSize)}
-                            </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* 仅在源目录 */}
+                  {diffData.sourceOnly.length > 0 && (
+                    <section>
+                      <h3 className="text-sm font-bold text-blue-600 mb-3 flex items-center gap-2">
+                        <ArrowUpRight size={16} />
+                        仅在源目录 ({diffData.sourceOnly.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {diffData.sourceOnly.map((file, i) => (
+                          <div
+                            key={i}
+                            className="bg-blue-50/30 border border-blue-100 rounded-xl p-3 flex items-center justify-between"
+                          >
+                            <span className="text-sm font-mono text-slate-700 truncate max-w-md">
+                              {file.path}
+                            </span>
+                            <span className="text-[11px] font-bold text-blue-600">
+                              {formatSize(file.size)}
+                            </span>
                           </div>
-                        </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </section>
+                    </section>
+                  )}
+
+                  {/* 仅在目标目录 */}
+                  {diffData.targetOnly.length > 0 && (
+                    <section>
+                      <h3 className="text-sm font-bold text-emerald-600 mb-3 flex items-center gap-2">
+                        <ArrowDownLeft size={16} />
+                        仅在目标目录 ({diffData.targetOnly.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {diffData.targetOnly.map((file, i) => (
+                          <div
+                            key={i}
+                            className="bg-emerald-50/30 border border-emerald-100 rounded-xl p-3 flex items-center justify-between"
+                          >
+                            <span className="text-sm font-mono text-slate-700 truncate max-w-md">
+                              {file.path}
+                            </span>
+                            <span className="text-[11px] font-bold text-emerald-600">
+                              {formatSize(file.size)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                </>
               )}
 
-              {/* 仅在源目录 */}
-              {diffData.sourceOnly.length > 0 && (
-                <section>
-                  <h3 className="text-sm font-bold text-blue-600 mb-3 flex items-center gap-2">
-                    <ArrowUpRight size={16} />
-                    仅在源目录 ({diffData.sourceOnly.length})
+              {/* 忽略规则展示 */}
+              <section className="pt-4 border-t border-slate-100">
+                <div className="bg-slate-50 rounded-2xl p-4">
+                  <h3 className="text-xs font-bold text-slate-400 mb-3 flex items-center gap-2 uppercase tracking-wider">
+                    <ShieldAlert size={14} />
+                    自动忽略的规则 (不参与对比与同步)
                   </h3>
-                  <div className="space-y-2">
-                    {diffData.sourceOnly.map((file, i) => (
-                      <div
+                  <div className="flex flex-wrap gap-2">
+                    {ignorePatterns.map((pattern, i) => (
+                      <span
                         key={i}
-                        className="bg-blue-50/30 border border-blue-100 rounded-xl p-3 flex items-center justify-between"
+                        className="px-2.5 py-1 bg-white border border-slate-200 text-slate-500 rounded-lg text-[11px] font-mono shadow-sm"
                       >
-                        <span className="text-sm font-mono text-slate-700 truncate max-w-md">
-                          {file.path}
-                        </span>
-                        <span className="text-[11px] font-bold text-blue-600">
-                          {formatSize(file.size)}
-                        </span>
-                      </div>
+                        {pattern}
+                      </span>
                     ))}
                   </div>
-                </section>
-              )}
-
-              {/* 仅在目标目录 */}
-              {diffData.targetOnly.length > 0 && (
-                <section>
-                  <h3 className="text-sm font-bold text-emerald-600 mb-3 flex items-center gap-2">
-                    <ArrowDownLeft size={16} />
-                    仅在目标目录 ({diffData.targetOnly.length})
-                  </h3>
-                  <div className="space-y-2">
-                    {diffData.targetOnly.map((file, i) => (
-                      <div
-                        key={i}
-                        className="bg-emerald-50/30 border border-emerald-100 rounded-xl p-3 flex items-center justify-between"
-                      >
-                        <span className="text-sm font-mono text-slate-700 truncate max-w-md">
-                          {file.path}
-                        </span>
-                        <span className="text-[11px] font-bold text-emerald-600">
-                          {formatSize(file.size)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
+                  <p className="text-[10px] text-slate-400 mt-3 italic">
+                    * 以上规则由系统内置，旨在保护系统稳定性并避免同步冗余数据。
+                  </p>
+                </div>
+              </section>
             </>
           )}
         </div>

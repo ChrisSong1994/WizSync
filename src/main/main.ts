@@ -5,7 +5,7 @@ import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
 import { logManager } from "./libs/logs";
 import { TrayManager } from "./libs/tray";
-import { getDirStats, getAllFiles } from "./libs/fs-utils";
+import { getDirStats, getAllFiles, IGNORE_PATTERNS } from "./libs/fs-utils";
 import { SyncTask } from "./libs/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -150,6 +150,10 @@ ipcMain.handle("get-persistent-logs", (_event, id: string) => {
 ipcMain.handle("clear-persistent-logs", (_event, id: string) => {
   syncManager.clearLogs(id);
   return true;
+});
+
+ipcMain.handle("get-ignore-patterns", () => {
+  return IGNORE_PATTERNS;
 });
 
 ipcMain.handle("open-log-folder", (_event, id: string) => {

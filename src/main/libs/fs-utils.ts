@@ -2,7 +2,34 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * 递归获取目录统计信息（总大小和文件数量）
+ * 定义全局统一的忽略规则
+ */
+export const IGNORE_PATTERNS = [
+  ".DS_Store",
+  ".git",
+  "node_modules",
+  "Thumbs.db",
+  "desktop.ini",
+  ".localized",
+  ".unison." // Unison 临时文件
+];
+
+/**
+ * 判断路径是否应该被忽略
+ */
+function isIgnored(name: string): boolean {
+  return IGNORE_PATTERNS.some(pattern => name.includes(name.startsWith('.') ? pattern : `/${pattern}/` || name === pattern));
+}
+
+/**
+ * 更鲁棒的忽略检查
+ */
+function shouldSkip(name: string): boolean {
+  return IGNORE_PATTERNS.some(p => name === p || name.includes(p));
+}
+
+/**
+ * 递归获取目录统计信息（排除忽略文件）
  */
 export async function getDirStats(
   dirPath: string
@@ -10,8 +37,13 @@ export async function getDirStats(
   let size = 0;
   let count = 0;
   try {
+    if (!fs.existsSync(dirPath)) return { size: 0, count: 0 };
+    
     const files = fs.readdirSync(dirPath, { withFileTypes: true });
     for (const file of files) {
+      // 过滤忽略的文件或目录
+      if (shouldSkip(file.name)) continue;
+
       const fullPath = path.join(dirPath, file.name);
       if (file.isDirectory()) {
         const subStats = await getDirStats(fullPath);
@@ -30,7 +62,7 @@ export async function getDirStats(
 }
 
 /**
- * 递归获取目录下所有文件的详细信息，用于对比差异
+ * 递归获取目录下所有文件的详细信息（排除忽略文件）
  */
 export function getAllFiles(
   dirPath: string,
@@ -38,8 +70,13 @@ export function getAllFiles(
 ): Map<string, { size: number; mtime: number }> {
   const result = new Map();
   try {
+    if (!fs.existsSync(dirPath)) return result;
+
     const files = fs.readdirSync(dirPath, { withFileTypes: true });
     for (const file of files) {
+      // 过滤忽略的文件或目录
+      if (shouldSkip(file.name)) continue;
+
       const fullPath = path.join(dirPath, file.name);
       const relPath = path.relative(baseDir, fullPath);
 

@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPersistentLogs: (id: string) => ipcRenderer.invoke('get-persistent-logs', id),
   clearPersistentLogs: (id: string) => ipcRenderer.invoke('clear-persistent-logs', id),
   openLogFolder: (id: string) => ipcRenderer.invoke('open-log-folder', id),
+  getIgnorePatterns: () => ipcRenderer.invoke('get-ignore-patterns'),
   onSyncStatus: (callback: any) => ipcRenderer.on('sync-status', (_event, value) => callback(value)),
   onSyncLog: (callback: any) => ipcRenderer.on('sync-log', (_event, value) => callback(value)),
 })

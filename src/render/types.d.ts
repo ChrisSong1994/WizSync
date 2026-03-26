@@ -30,6 +30,7 @@ export interface ElectronAPI {
   getPersistentLogs: (id: string) => Promise<string>
   clearPersistentLogs: (id: string) => Promise<boolean>
   openLogFolder: (id: string) => Promise<boolean>
+  getIgnorePatterns: () => Promise<string[]>
   onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; sourceStats?: any; targetStats?: any }) => void) => void
   onSyncLog: (callback: (data: { id: string; log: string }) => void) => void
 }
