@@ -93,39 +93,58 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 )}
                 {task.sourceDisk && (
                   <span className="text-[10px] text-slate-500">
-                    磁盘: {formatSize(task.sourceDisk.free)} 剩余 / {formatSize(task.sourceDisk.total)}
+                    磁盘:{" "}
+                    <span className={cn(
+                      task.sourceDisk.free < 200 * 1024 * 1024 
+                        ? "text-red-500 font-bold" 
+                        : task.sourceDisk.free < 1024 * 1024 * 1024 
+                          ? "text-amber-500 font-bold" 
+                          : "text-slate-400"
+                    )}>
+                      {formatSize(task.sourceDisk.free)} 剩余
+                    </span>
+                    {" "}/ {formatSize(task.sourceDisk.total)}
                   </span>
                 )}
-              </div>
-            </div>
+                </div>
+                </div>
 
-            {task.direction === "bidirectional" ? (
-              <ArrowLeftRight
+                {task.direction === "bidirectional" ? (
+                <ArrowLeftRight
                 size={14}
                 className="text-slate-400 flex-shrink-0"
-              />
-            ) : (
-              <ArrowRight size={14} className="text-slate-400 flex-shrink-0" />
-            )}
+                />
+                ) : (
+                <ArrowRight size={14} className="text-slate-400 flex-shrink-0" />
+                )}
 
-            <div className="flex flex-col">
-              <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
+                <div className="flex flex-col">
+                <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
                 {task.targetPath.split("/").pop()}
-              </span>
-              <div className="flex flex-col mt-0.5 ml-1">
+                </span>
+                <div className="flex flex-col mt-0.5 ml-1">
                 {task.targetStats && (
-                  <span className="text-[11px] text-slate-500">
+                  <span className="text-[11px] text-slate-400">
                     {formatSize(task.targetStats.size)} · {task.targetStats.count} 文件
                   </span>
                 )}
                 {task.targetDisk && (
                   <span className="text-[10px] text-slate-500">
-                    磁盘: {formatSize(task.targetDisk.free)} 剩余 / {formatSize(task.targetDisk.total)}
+                    磁盘:{" "}
+                    <span className={cn(
+                      task.targetDisk.free < 200 * 1024 * 1024 
+                        ? "text-red-500 font-bold" 
+                        : task.targetDisk.free < 1024 * 1024 * 1024 
+                          ? "text-amber-500 font-bold" 
+                          : "text-slate-400"
+                    )}>
+                      {formatSize(task.targetDisk.free)} 剩余
+                    </span>
+                    {" "}/ {formatSize(task.targetDisk.total)}
                   </span>
                 )}
-              </div>
-            </div>
-          </div>
+                </div>
+                </div>          </div>
         </div>
 
         {/* 操作按钮 */}
