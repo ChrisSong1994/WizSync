@@ -91,7 +91,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                     {formatSize(task.sourceStats.size)} · {task.sourceStats.count} 文件
                   </span>
                 )}
-                {task.sourceDisk && (
+                {task.sourceDisk ? (
                   <span className="text-[10px] text-slate-500">
                     磁盘:{" "}
                     <span className={cn(
@@ -104,6 +104,10 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                       {formatSize(task.sourceDisk.free)} 剩余
                     </span>
                     {" "}/ {formatSize(task.sourceDisk.total)}
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-red-500 font-bold">
+                    磁盘未连接
                   </span>
                 )}
                 </div>
@@ -128,7 +132,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                     {formatSize(task.targetStats.size)} · {task.targetStats.count} 文件
                   </span>
                 )}
-                {task.targetDisk && (
+                {task.targetDisk ? (
                   <span className="text-[10px] text-slate-500">
                     磁盘:{" "}
                     <span className={cn(
@@ -141,6 +145,10 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                       {formatSize(task.targetDisk.free)} 剩余
                     </span>
                     {" "}/ {formatSize(task.targetDisk.total)}
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-red-500 font-bold">
+                    磁盘未连接
                   </span>
                 )}
                 </div>

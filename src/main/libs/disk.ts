@@ -38,7 +38,7 @@ export class DiskManager {
   }
 
   /**
-   * 启动全局磁盘空间监控，每 20 秒刷新一次
+   * 启动全局磁盘空间监控，每 10 秒刷新一次
    */
   private startMonitoring() {
     if (this.diskSpaceTimer) clearInterval(this.diskSpaceTimer);
@@ -79,7 +79,7 @@ export class DiskManager {
       if (hasAnyChange) {
         this.onStatusChange?.();
       }
-    }, 20000); 
+    }, 10000); 
   }
 
   /**
