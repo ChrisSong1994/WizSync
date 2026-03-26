@@ -99,7 +99,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                         ? "text-red-500 font-bold" 
                         : task.sourceDisk.free < 1024 * 1024 * 1024 
                           ? "text-amber-500 font-bold" 
-                          : "text-slate-400"
+                          : "text-slate-500"
                     )}>
                       {formatSize(task.sourceDisk.free)} 剩余
                     </span>
@@ -112,10 +112,10 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 {task.direction === "bidirectional" ? (
                 <ArrowLeftRight
                 size={14}
-                className="text-slate-400 flex-shrink-0"
+                className="text-slate-500 flex-shrink-0"
                 />
                 ) : (
-                <ArrowRight size={14} className="text-slate-400 flex-shrink-0" />
+                <ArrowRight size={14} className="text-slate-500 flex-shrink-0" />
                 )}
 
                 <div className="flex flex-col">
@@ -124,7 +124,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 </span>
                 <div className="flex flex-col mt-0.5 ml-1">
                 {task.targetStats && (
-                  <span className="text-[11px] text-slate-400">
+                  <span className="text-[11px] text-slate-500">
                     {formatSize(task.targetStats.size)} · {task.targetStats.count} 文件
                   </span>
                 )}
@@ -136,7 +136,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                         ? "text-red-500 font-bold" 
                         : task.targetDisk.free < 1024 * 1024 * 1024 
                           ? "text-amber-500 font-bold" 
-                          : "text-slate-400"
+                          : "text-slate-500"
                     )}>
                       {formatSize(task.targetDisk.free)} 剩余
                     </span>
@@ -192,7 +192,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
       {/* 最近同步信息 */}
       {task.lastSyncTime && (
         <div className="px-5 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-          <span className="text-[12px] text-slate-400 flex items-center gap-1">
+          <span className="text-[12px] text-slate-500 flex items-center gap-1">
             <Clock size={12} />
             最近同步: {task.lastSyncTime}
           </span>
