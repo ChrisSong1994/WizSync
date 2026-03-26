@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Loader2,
   FileSearch,
+  MapPin,
 } from "lucide-react";
 import { SyncTask } from "../types";
 import { cn, formatSize } from "../utils";
@@ -32,6 +33,10 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onShowLogs,
   onCompare,
 }) => {
+  const handleReveal = (side: "source" | "target") => {
+    window.electronAPI.revealInFileExplorer(task.id, "", side);
+  };
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow overflow-hidden group">
       <div className="p-5 flex items-center gap-6">
@@ -82,9 +87,18 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           </div>
           <div className="flex items-center gap-3 text-sm text-slate-500">
             <div className="flex flex-col">
-              <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
-                {task.sourcePath.split("/").pop()}
-              </span>
+              <div className="flex items-center gap-1 group/path">
+                <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
+                  {task.sourcePath.split("/").pop()}
+                </span>
+                <button
+                  onClick={() => handleReveal("source")}
+                  className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
+                  title="在访达/资源管理器中定位"
+                >
+                  <MapPin size={12} />
+                </button>
+              </div>
               <div className="flex flex-col mt-0.5 ml-1">
                 {task.sourceStats && (
                   <span className="text-[11px] text-slate-500">
@@ -123,9 +137,18 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 )}
 
                 <div className="flex flex-col">
-                <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
-                {task.targetPath.split("/").pop()}
-                </span>
+                <div className="flex items-center gap-1 group/path">
+                  <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
+                    {task.targetPath.split("/").pop()}
+                  </span>
+                  <button
+                    onClick={() => handleReveal("target")}
+                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
+                    title="在访达/资源管理器中定位"
+                  >
+                    <MapPin size={12} />
+                  </button>
+                </div>
                 <div className="flex flex-col mt-0.5 ml-1">
                 {task.targetStats && (
                   <span className="text-[11px] text-slate-500">

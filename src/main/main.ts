@@ -29,10 +29,15 @@ export function getUnisonPath(): string {
   }
 
   const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
-  
+
   // 使用 app.getAppPath() 获取应用根目录
-  let resourcePath = path.join(app.getAppPath(), "src/resources/bin", arch, "unison");
-  
+  let resourcePath = path.join(
+    app.getAppPath(),
+    "src/resources/bin",
+    arch,
+    "unison",
+  );
+
   // 处理 ASAR unpack 后的路径
   if (resourcePath.includes("app.asar")) {
     resourcePath = resourcePath.replace("app.asar", "app.asar.unpacked");
@@ -50,7 +55,7 @@ export function getUnisonPath(): string {
   } catch (err) {
     console.error("修复二进制权限失败:", err);
   }
-  
+
   return resourcePath;
 }
 
@@ -74,6 +79,8 @@ function createWindow() {
     icon: path.join(process.env.VITE_PUBLIC || "", "assets/logo.png"),
     width: 1000,
     height: 750,
+    minHeight: 600,
+    minWidth: 850,
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
     },
@@ -185,47 +192,68 @@ ipcMain.handle("get-ignore-patterns", () => {
   return IGNORE_PATTERNS;
 });
 
-ipcMain.handle("sync-single-file", async (_event, taskId: string, filePath: string, direction: 'sourceToTarget' | 'targetToSource') => {
-  const tasks = syncStore.getTasks();
-  const task = tasks.find(t => t.id === taskId);
-  if (!task) return false;
+ipcMain.handle(
+  "sync-single-file",
+  async (
+    _event,
+    taskId: string,
+    filePath: string,
+    direction: "sourceToTarget" | "targetToSource",
+  ) => {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return false;
 
-  const src = direction === 'sourceToTarget' 
-    ? path.join(task.sourcePath, filePath) 
-    : path.join(task.targetPath, filePath);
-  
-  const dest = direction === 'sourceToTarget' 
-    ? path.join(task.targetPath, filePath) 
-    : path.join(task.sourcePath, filePath);
+    const src =
+      direction === "sourceToTarget"
+        ? path.join(task.sourcePath, filePath)
+        : path.join(task.targetPath, filePath);
 
-  try {
-    const destDir = path.dirname(dest);
-    if (!fs.existsSync(destDir)) {
-      fs.mkdirSync(destDir, { recursive: true });
+    const dest =
+      direction === "sourceToTarget"
+        ? path.join(task.targetPath, filePath)
+        : path.join(task.sourcePath, filePath);
+
+    try {
+      const destDir = path.dirname(dest);
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+      }
+      fs.copyFileSync(src, dest);
+      logManager.write(
+        taskId,
+        `[手动同步] 已将文件从 ${direction === "sourceToTarget" ? "源端" : "目标端"} 覆盖到另一端: ${filePath}`,
+      );
+      return true;
+    } catch (err) {
+      console.error("单文件同步失败:", err);
+      return false;
     }
-    fs.copyFileSync(src, dest);
-    logManager.write(taskId, `[手动同步] 已将文件从 ${direction === 'sourceToTarget' ? '源端' : '目标端'} 覆盖到另一端: ${filePath}`);
-    return true;
-  } catch (err) {
-    console.error("单文件同步失败:", err);
+  },
+);
+
+ipcMain.handle(
+  "reveal-in-explorer",
+  async (
+    _event,
+    taskId: string,
+    filePath: string,
+    side: "source" | "target",
+  ) => {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+
+    const basePath = side === "source" ? task.sourcePath : task.targetPath;
+    const fullPath = path.join(basePath, filePath);
+
+    if (fs.existsSync(fullPath)) {
+      shell.showItemInFolder(fullPath);
+      return true;
+    }
     return false;
-  }
-});
-
-ipcMain.handle("reveal-in-explorer", async (_event, taskId: string, filePath: string, side: 'source' | 'target') => {
-  const tasks = syncStore.getTasks();
-  const task = tasks.find(t => t.id === taskId);
-  if (!task) return false;
-
-  const basePath = side === 'source' ? task.sourcePath : task.targetPath;
-  const fullPath = path.join(basePath, filePath);
-
-  if (fs.existsSync(fullPath)) {
-    shell.showItemInFolder(fullPath);
-    return true;
-  }
-  return false;
-});
+  },
+);
 
 ipcMain.handle("open-log-folder", (_event, id: string) => {
   const dir = logManager.getTaskDir(id);
@@ -245,7 +273,7 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
   // 并行扫描两个目录，并实时向渲染进程报告进度
   const [sourceFiles, targetFiles] = await Promise.all([
     getAllFiles(task.sourcePath, task.sourcePath, { count: 0 }, sendProgress),
-    getAllFiles(task.targetPath, task.targetPath, { count: 0 }, sendProgress)
+    getAllFiles(task.targetPath, task.targetPath, { count: 0 }, sendProgress),
   ]);
 
   const diff = {
@@ -271,10 +299,10 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
         targetMtime: tInfo.mtime,
       });
     }
-    
+
     processedCount++;
     if (processedCount % 500 === 0) {
-      await new Promise(resolve => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
     }
   }
 
