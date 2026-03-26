@@ -25,6 +25,9 @@
     "directories": {
       "output": "dist"
     },
+    "asarUnpack": [
+      "src/resources/bin/**/*"
+    ],
     "files": [
       "dist-electron/**/*",
       "dist/**/*",

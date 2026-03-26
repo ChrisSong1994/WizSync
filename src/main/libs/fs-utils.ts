@@ -33,6 +33,24 @@ function shouldSkip(name: string): boolean {
 }
 
 /**
+ * 获取路径所在磁盘的容量信息
+ */
+export function getDiskSpace(dirPath: string): { total: number; free: number } | null {
+  try {
+    if (!fs.existsSync(dirPath)) return null;
+    // 使用 statfs 获取磁盘统计信息
+    const stats = fs.statfsSync(dirPath);
+    return {
+      total: stats.bsize * stats.blocks,
+      free: stats.bsize * stats.bfree,
+    };
+  } catch (err) {
+    console.error("获取磁盘空间失败:", err);
+    return null;
+  }
+}
+
+/**
  * 递归获取目录统计信息（排除忽略文件）
  */
 export async function getDirStats(

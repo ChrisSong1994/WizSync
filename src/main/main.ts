@@ -1,11 +1,12 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
 import { logManager } from "./libs/logs";
 import { TrayManager } from "./libs/tray";
-import { getDirStats, getAllFiles, IGNORE_PATTERNS } from "./libs/fs-utils";
+import { getDirStats, getAllFiles, IGNORE_PATTERNS, getDiskSpace } from "./libs/fs-utils";
 import { SyncTask } from "./libs/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -28,8 +29,26 @@ export function getUnisonPath(): string {
 
   const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
   
-  // 使用 app.getAppPath() 获取应用根目录，无论是开发还是生产环境都能准确定位 src
-  const resourcePath = path.join(app.getAppPath(), "src/resources/bin", arch, "unison");
+  // 使用 app.getAppPath() 获取应用根目录
+  let resourcePath = path.join(app.getAppPath(), "src/resources/bin", arch, "unison");
+  
+  // 处理 ASAR unpack 后的路径
+  if (resourcePath.includes("app.asar")) {
+    resourcePath = resourcePath.replace("app.asar", "app.asar.unpacked");
+  }
+
+  // 确保二进制文件具有可执行权限
+  try {
+    if (fs.existsSync(resourcePath)) {
+      const stats = fs.statSync(resourcePath);
+      // 如果没有执行权限 (0o111)，则添加权限
+      if (!(stats.mode & 0o111)) {
+        fs.chmodSync(resourcePath, 0o755);
+      }
+    }
+  } catch (err) {
+    console.error("修复二进制权限失败:", err);
+  }
   
   return resourcePath;
 }
@@ -103,6 +122,16 @@ app.on("before-quit", () => {
 app.whenReady().then(() => {
   createWindow();
   trayManager.createTray(createWindow);
+
+  // 应用启动后自动执行所有非手动任务
+  setTimeout(() => {
+    const tasks = syncStore.getTasks();
+    tasks.forEach((task) => {
+      if (task.mode === "realtime" || task.mode === "scheduled") {
+        syncManager.startTask(task);
+      }
+    });
+  }, 1500); // 延迟 1.5 秒启动，确保 UI 和系统资源已就绪
 });
 
 // IPC 处理器绑定
@@ -111,6 +140,8 @@ ipcMain.handle("get-tasks", () => syncStore.getTasks());
 ipcMain.handle("save-task", async (_event, task: SyncTask) => {
   task.sourceStats = await getDirStats(task.sourcePath);
   task.targetStats = await getDirStats(task.targetPath);
+  task.sourceDisk = getDiskSpace(task.sourcePath) || undefined;
+  task.targetDisk = getDiskSpace(task.targetPath) || undefined;
   return syncStore.saveTask(task);
 });
 

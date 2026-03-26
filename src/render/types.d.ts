@@ -11,6 +11,8 @@ export interface SyncTask {
   useParallel?: boolean
   sourceStats?: { size: number; count: number }
   targetStats?: { size: number; count: number }
+  sourceDisk?: { total: number; free: number }
+  targetDisk?: { total: number; free: number }
 }
 
 export interface DiffResult {

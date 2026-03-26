@@ -4,7 +4,7 @@ import { BrowserWindow } from "electron";
 import fs from "node:fs";
 import { SyncTask } from "./types";
 import { syncStore } from "./sync-store";
-import { getDirStats } from "./fs-utils";
+import { getDirStats, getDiskSpace } from "./fs-utils";
 import { getUnisonPath } from "../main";
 import { logManager } from "./logs";
 
@@ -181,16 +181,21 @@ export class SyncManager {
     this.hasPendingSync.set(task.id, false); 
 
     const args = [
-      task.sourcePath,
-      task.targetPath,
       "-batch",
+      "-terse", 
       "-prefer", "newer",
       "-times",
       "-copyonconflict",
       "-ignoreinodenumbers",
       "-fat",
+      "-dontchmod",
+      "-perms", "0",
+      // 改用更稳健的开关设置方式，防止被误认为根目录
+      "-owner=false",
+      "-group=false",
+      "-xferbycopying",
+      "-fastcheck=true",
       "-ui", "text",
-      // 增加过滤规则确保同步进程本身产生的临时文件不参与递归
       "-ignore", "Name {.DS_Store,.git,node_modules,Thumbs.db,desktop.ini,.localized}",
       "-ignore", "Name .unison.*.tmp",
       "-label", task.name,
@@ -198,6 +203,12 @@ export class SyncManager {
     ];
 
     if (task.useParallel) args.push("-maxthreads", "10");
+    
+    // 位置参数：直接传入两个路径，不再使用 -root 前缀以兼容更多版本
+    args.push(task.sourcePath);
+    args.push(task.targetPath);
+
+    // 单向同步强制覆盖
     if (task.direction === "sourceToTarget") args.push("-force", task.sourcePath);
     else if (task.direction === "targetToSource") args.push("-force", task.targetPath);
 
@@ -239,10 +250,30 @@ proc.stderr.on("data", (data) => {
       const lastSyncTime = new Date().toLocaleString();
       
       if (fs.existsSync(task.sourcePath) && fs.existsSync(task.targetPath)) {
-        getDirStats(task.sourcePath).then(sourceStats => {
-          getDirStats(task.targetPath).then(targetStats => {
-            syncStore.updateTask(task.id, { status, lastSyncTime, sourceStats, targetStats });
-            this.win?.webContents.send("sync-status", { id: task.id, status, lastSyncTime, sourceStats, targetStats });
+        Promise.all([
+          getDirStats(task.sourcePath),
+          getDirStats(task.targetPath)
+        ]).then(([sourceStats, targetStats]) => {
+          const sourceDisk = getDiskSpace(task.sourcePath) || undefined;
+          const targetDisk = getDiskSpace(task.targetPath) || undefined;
+
+          syncStore.updateTask(task.id, { 
+            status, 
+            lastSyncTime, 
+            sourceStats, 
+            targetStats,
+            sourceDisk,
+            targetDisk
+          });
+          
+          this.win?.webContents.send("sync-status", { 
+            id: task.id, 
+            status, 
+            lastSyncTime, 
+            sourceStats, 
+            targetStats,
+            sourceDisk,
+            targetDisk
           });
         });
       }

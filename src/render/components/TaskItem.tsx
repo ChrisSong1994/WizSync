@@ -85,11 +85,18 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
                 {task.sourcePath.split("/").pop()}
               </span>
-              {task.sourceStats && (
-                <span className="text-[12px] text-slate-400 mt-0.5 ml-1">
-                  {formatSize(task.sourceStats.size)} · {task.sourceStats.count} 文件
-                </span>
-              )}
+              <div className="flex flex-col mt-0.5 ml-1">
+                {task.sourceStats && (
+                  <span className="text-[11px] text-slate-500">
+                    {formatSize(task.sourceStats.size)} · {task.sourceStats.count} 文件
+                  </span>
+                )}
+                {task.sourceDisk && (
+                  <span className="text-[10px] text-slate-500">
+                    磁盘: {formatSize(task.sourceDisk.free)} 剩余 / {formatSize(task.sourceDisk.total)}
+                  </span>
+                )}
+              </div>
             </div>
 
             {task.direction === "bidirectional" ? (
@@ -105,11 +112,18 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
                 {task.targetPath.split("/").pop()}
               </span>
-              {task.targetStats && (
-                <span className="text-[12px] text-slate-400 mt-0.5 ml-1">
-                  {formatSize(task.targetStats.size)} · {task.targetStats.count} 文件
-                </span>
-              )}
+              <div className="flex flex-col mt-0.5 ml-1">
+                {task.targetStats && (
+                  <span className="text-[11px] text-slate-500">
+                    {formatSize(task.targetStats.size)} · {task.targetStats.count} 文件
+                  </span>
+                )}
+                {task.targetDisk && (
+                  <span className="text-[10px] text-slate-500">
+                    磁盘: {formatSize(task.targetDisk.free)} 剩余 / {formatSize(task.targetDisk.total)}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
