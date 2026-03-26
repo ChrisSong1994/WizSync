@@ -35,7 +35,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow overflow-hidden group">
       <div className="p-5 flex items-center gap-6">
-        {/* Status Indicator */}
+        {/* 状态指示器 */}
         <div className="flex-shrink-0 relative">
           <div
             className={cn(
@@ -57,7 +57,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           </div>
         </div>
 
-        {/* Task Info */}
+        {/* 任务信息 */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <h3 className="text-lg font-bold text-slate-800 truncate">
@@ -114,7 +114,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           </div>
         </div>
 
-        {/* Actions */}
+        {/* 操作按钮 */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => onCompare(task.id)}
@@ -156,7 +156,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         </div>
       </div>
 
-      {/* Last Sync Info */}
+      {/* 最近同步信息 */}
       {task.lastSyncTime && (
         <div className="px-5 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
           <span className="text-[11px] text-slate-400 flex items-center gap-1">

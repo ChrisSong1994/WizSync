@@ -3,18 +3,23 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
+import { TrayManager } from "./libs/tray";
 import { getDirStats, getAllFiles } from "./libs/fs-utils";
 import { SyncTask } from "./libs/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const APP_ROOT = path.join(__dirname, "..");
 
-// Fix for production PATH on macOS
+// 修复 macOS 生产环境下的 PATH 变量
 if (process.platform === "darwin") {
   process.env.PATH = `${process.env.PATH}:/usr/local/bin:/opt/homebrew/bin:/opt/local/bin`;
 }
 
-process.env.APP_ROOT = path.join(__dirname, "..");
+process.env.APP_ROOT = APP_ROOT;
 
+/**
+ * 获取 Unison 二进制文件的路径
+ */
 export function getUnisonPath(): string {
   if (process.platform !== "darwin") {
     return "unison";
@@ -23,26 +28,29 @@ export function getUnisonPath(): string {
   const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
   
   if (app.isPackaged) {
-    // In packaged app, src/resources is copied to the resources directory or app content
-    // Depending on electron-builder, it might be in different places.
-    // Based on package.json "files", it's in the app bundle.
+    // 打包后的应用，二进制文件位于 resources 目录
     return path.join(process.resourcesPath, "src/resources/bin", arch, "unison");
   } else {
-    // In development
-    return path.join(process.env.APP_ROOT, "src/resources/bin", arch, "unison");
+    // 开发环境下
+    return path.join(APP_ROOT, "src/resources/bin", arch, "unison");
   }
 }
 
 export const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
-export const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
-export const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
+export const MAIN_DIST = path.join(APP_ROOT, "dist-electron");
+export const RENDERER_DIST = path.join(APP_ROOT, "dist");
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
-  ? path.join(process.env.APP_ROOT, "public")
+  ? path.join(APP_ROOT, "public")
   : RENDERER_DIST;
 
 let win: BrowserWindow | null = null;
+let isQuitting = false;
+const trayManager = new TrayManager(APP_ROOT);
 
+/**
+ * 创建主窗口
+ */
 function createWindow() {
   win = new BrowserWindow({
     icon: path.join(process.env.VITE_PUBLIC || "", "assets/logo.png"),
@@ -55,6 +63,7 @@ function createWindow() {
   });
 
   syncManager.setWindow(win);
+  trayManager.setWindow(win);
 
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
@@ -62,6 +71,16 @@ function createWindow() {
   } else {
     win.loadFile(path.join(RENDERER_DIST, "index.html"));
   }
+
+  win.on("close", (e) => {
+    if (isQuitting) {
+      win = null;
+    } else {
+      // 拦截关闭事件，隐藏窗口而不是退出
+      e.preventDefault();
+      win?.hide();
+    }
+  });
 }
 
 app.on("window-all-closed", () => {
@@ -74,12 +93,21 @@ app.on("window-all-closed", () => {
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
+  } else {
+    win?.show();
   }
 });
 
-app.whenReady().then(createWindow);
+app.on("before-quit", () => {
+  isQuitting = true;
+});
 
-// IPC Handlers
+app.whenReady().then(() => {
+  createWindow();
+  trayManager.createTray(createWindow);
+});
+
+// IPC 处理器绑定
 ipcMain.handle("get-tasks", () => syncStore.getTasks());
 
 ipcMain.handle("save-task", async (_event, task: SyncTask) => {

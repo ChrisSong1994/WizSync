@@ -21,7 +21,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 flex-shrink-0">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 flex-shrink-0">
           <h2 className="text-xl font-bold text-slate-800">
             {currentTask?.name ? "编辑任务" : "创建同步任务"}
           </h2>
@@ -35,7 +35,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         </div>
 
         <div className="p-6 space-y-5 flex-1 overflow-y-auto">
-          {/* Task Name */}
+          {/* 任务名称 */}
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-slate-700 ml-1">
               任务名称
@@ -49,7 +49,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             />
           </div>
 
-          {/* Paths */}
+          {/* 路径配置 */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-sm font-bold text-slate-700 ml-1">
@@ -79,7 +79,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           </div>
 
-          {/* Direction */}
+          {/* 同步方向 */}
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-slate-700 ml-1">
               同步方向
@@ -107,7 +107,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           </div>
 
-          {/* Mode */}
+          {/* 执行策略 */}
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-slate-700 ml-1">
               执行策略
@@ -149,7 +149,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           )}
 
-          {/* Advanced Options */}
+          {/* 高级选项 */}
           <div className="pt-2">
             <label className="flex items-center gap-3 cursor-pointer group">
               <div

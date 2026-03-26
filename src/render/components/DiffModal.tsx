@@ -64,7 +64,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
             </div>
           ) : (
             <>
-              {/* Different Files */}
+              {/* 差异文件 */}
               {diffData.different.length > 0 && (
                 <section>
                   <h3 className="text-sm font-bold text-amber-600 mb-3 flex items-center gap-2">
@@ -105,7 +105,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                 </section>
               )}
 
-              {/* Source Only */}
+              {/* 仅在源目录 */}
               {diffData.sourceOnly.length > 0 && (
                 <section>
                   <h3 className="text-sm font-bold text-blue-600 mb-3 flex items-center gap-2">
@@ -130,7 +130,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                 </section>
               )}
 
-              {/* Target Only */}
+              {/* 仅在目标目录 */}
               {diffData.targetOnly.length > 0 && (
                 <section>
                   <h3 className="text-sm font-bold text-emerald-600 mb-3 flex items-center gap-2">

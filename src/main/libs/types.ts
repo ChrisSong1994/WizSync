@@ -4,7 +4,7 @@ export interface SyncTask {
   sourcePath: string;
   targetPath: string;
   mode: "realtime" | "scheduled" | "manual";
-  interval?: number; // in minutes
+  interval?: number; // 单位：分钟
   direction: "bidirectional" | "sourceToTarget" | "targetToSource";
   status: "idle" | "syncing" | "error";
   lastSyncTime?: string;

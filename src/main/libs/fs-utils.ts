@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
+/**
+ * 递归获取目录统计信息（总大小和文件数量）
+ */
 export async function getDirStats(
   dirPath: string
 ): Promise<{ size: number; count: number }> {
@@ -21,11 +24,14 @@ export async function getDirStats(
       }
     }
   } catch (err) {
-    console.error("Stats error:", err);
+    console.error("获取统计信息失败:", err);
   }
   return { size, count };
 }
 
+/**
+ * 递归获取目录下所有文件的详细信息，用于对比差异
+ */
 export function getAllFiles(
   dirPath: string,
   baseDir: string = dirPath
@@ -46,7 +52,7 @@ export function getAllFiles(
       }
     }
   } catch (err) {
-    console.error("List error:", err);
+    console.error("获取文件列表失败:", err);
   }
   return result;
 }
