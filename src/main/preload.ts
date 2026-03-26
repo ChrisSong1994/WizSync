@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getIgnorePatterns: () => ipcRenderer.invoke('get-ignore-patterns'),
   syncSingleFile: (taskId: string, filePath: string, direction: string) => 
     ipcRenderer.invoke('sync-single-file', taskId, filePath, direction),
+  revealInFileExplorer: (taskId: string, filePath: string, side: string) =>
+    ipcRenderer.invoke('reveal-in-explorer', taskId, filePath, side),
   onSyncStatus: (callback: any) => ipcRenderer.on('sync-status', (_event, value) => callback(value)),
   onSyncLog: (callback: any) => ipcRenderer.on('sync-log', (_event, value) => callback(value)),
   onCompareProgress: (callback: any) => ipcRenderer.on('compare-progress', (_event, value) => callback(value)),

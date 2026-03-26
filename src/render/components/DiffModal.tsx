@@ -9,9 +9,12 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   ShieldAlert,
+  ChevronLeft,
+  ChevronRight,
+  MapPin,
 } from "lucide-react";
 import { SyncTask, DiffResult } from "../types";
-import { formatSize } from "../utils";
+import { formatSize, cn } from "../utils";
 
 interface DiffModalProps {
   taskId: string;
@@ -28,17 +31,17 @@ export const DiffModal: React.FC<DiffModalProps> = ({
 }) => {
   const [ignorePatterns, setIgnorePatterns] = useState<string[]>([]);
   const [scanCount, setScanCount] = useState(0);
+  const [syncingPaths, setSyncingPaths] = useState<Set<string>>(new Set());
+  const [resolvedPaths, setResolvedPaths] = useState<Set<string>>(new Set());
   const taskName = tasks.find((t) => t.id === taskId)?.name;
 
   useEffect(() => {
-    // 获取忽略规则
     const fetchPatterns = async () => {
       const patterns = await window.electronAPI.getIgnorePatterns();
       setIgnorePatterns(patterns);
     };
     fetchPatterns();
 
-    // 监听扫描进度
     const handleProgress = (data: { id: string; count: number }) => {
       if (data.id === taskId) {
         setScanCount(data.count);
@@ -47,7 +50,24 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     window.electronAPI.onCompareProgress(handleProgress);
   }, [taskId]);
 
-  // 限制显示的差异项数量，防止 DOM 过载
+  const handleSyncFile = async (filePath: string, direction: 'sourceToTarget' | 'targetToSource') => {
+    const key = `${filePath}-${direction}`;
+    setSyncingPaths(prev => new Set(prev).add(key));
+    const success = await window.electronAPI.syncSingleFile(taskId, filePath, direction);
+    setSyncingPaths(prev => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    if (success) {
+      setResolvedPaths(prev => new Set(prev).add(filePath));
+    }
+  };
+
+  const handleReveal = (filePath: string, side: 'source' | 'target') => {
+    window.electronAPI.revealInFileExplorer(taskId, filePath, side);
+  };
+
   const MAX_DISPLAY = 1000;
   const totalDiffs = diffData ? 
     diffData.different.length + diffData.sourceOnly.length + diffData.targetOnly.length : 0;
@@ -84,10 +104,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                   {scanCount > 999 ? `${(scanCount/1000).toFixed(1)}k` : scanCount}
                 </div>
               </div>
-              <div className="text-center">
-                <p className="font-bold text-slate-700">正在扫描文件差异...</p>
-                <p className="text-xs text-slate-400 mt-1">已检索 {scanCount.toLocaleString()} 个文件</p>
-              </div>
+              <p className="font-bold text-slate-700">已检索 {scanCount.toLocaleString()} 个文件...</p>
             </div>
           ) : (
             <>
@@ -97,18 +114,10 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                     <CheckCircle2 size={32} />
                   </div>
                   <h3 className="text-lg font-bold text-slate-800">目录已同步</h3>
-                  <p className="text-slate-500 mt-1">源目录与目标目录内容完全一致。</p>
                 </div>
               ) : (
                 <>
-                  {totalDiffs > MAX_DISPLAY && (
-                    <div className="bg-amber-50 border border-amber-100 text-amber-700 px-4 py-3 rounded-xl text-xs flex items-center gap-2">
-                      <ShieldAlert size={14} />
-                      注意：检测到共有 {totalDiffs.toLocaleString()} 处差异，下方仅展示前 {MAX_DISPLAY} 项以保证流畅度。
-                    </div>
-                  )}
-
-                  {/* 差异内容渲染... */}
+                  {/* 内容不一致 */}
                   {diffData.different.length > 0 && (
                     <section>
                       <h3 className="text-sm font-bold text-amber-600 mb-3 flex items-center gap-2">
@@ -116,18 +125,51 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         内容不一致 ({diffData.different.length})
                       </h3>
                       <div className="space-y-2">
-                        {diffData.different.slice(0, MAX_DISPLAY).map((file, i) => (
+                        {diffData.different.slice(0, MAX_DISPLAY).map((file, i) => !resolvedPaths.has(file.path) && (
                           <div key={i} className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex items-center justify-between group hover:border-amber-200 transition-colors">
-                            <span className="text-sm font-mono text-slate-700 truncate max-w-md">{file.path}</span>
-                            <div className="flex items-center gap-4 text-[11px]">
-                              <div className="text-right">
-                                <div className="text-slate-400 uppercase font-bold text-[9px]">源端</div>
-                                <div className="text-slate-600 font-medium">{formatSize(file.sourceSize)}</div>
+                            <span className="text-sm font-mono text-slate-700 truncate max-w-sm mr-4" title={file.path}>
+                              {file.path}
+                            </span>
+                            
+                            <div className="flex items-center gap-2">
+                              {/* 源端控制组 */}
+                              <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-100">
+                                <button 
+                                  onClick={() => handleReveal(file.path, 'source')}
+                                  className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600 transition-all"
+                                  title="在源端定位文件"
+                                >
+                                  <MapPin size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleSyncFile(file.path, 'sourceToTarget')}
+                                  disabled={syncingPaths.has(`${file.path}-sourceToTarget`)}
+                                  className="px-2 py-1 hover:bg-blue-50 rounded-lg text-blue-600 flex flex-col items-center disabled:opacity-50"
+                                >
+                                  <span className="text-[8px] font-bold uppercase">使用此版本</span>
+                                  <span className="text-[10px] font-medium">{formatSize(file.sourceSize)}</span>
+                                </button>
                               </div>
-                              <ArrowRight size={12} className="text-slate-300" />
-                              <div className="text-left">
-                                <div className="text-slate-400 uppercase font-bold text-[9px]">目标端</div>
-                                <div className="text-slate-600 font-medium">{formatSize(file.targetSize)}</div>
+
+                              <ArrowRight size={14} className="text-slate-300 mx-1" />
+
+                              {/* 目标端控制组 */}
+                              <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-100">
+                                <button
+                                  onClick={() => handleSyncFile(file.path, 'targetToSource')}
+                                  disabled={syncingPaths.has(`${file.path}-targetToSource`)}
+                                  className="px-2 py-1 hover:bg-emerald-50 rounded-lg text-emerald-600 flex flex-col items-center disabled:opacity-50"
+                                >
+                                  <span className="text-[8px] font-bold uppercase">使用此版本</span>
+                                  <span className="text-[10px] font-medium">{formatSize(file.targetSize)}</span>
+                                </button>
+                                <button 
+                                  onClick={() => handleReveal(file.path, 'target')}
+                                  className="p-1.5 hover:bg-emerald-50 rounded-lg text-slate-400 hover:text-emerald-600 transition-all"
+                                  title="在目标端定位文件"
+                                >
+                                  <MapPin size={14} />
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -136,6 +178,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                     </section>
                   )}
 
+                  {/* 仅在源目录 */}
                   {diffData.sourceOnly.length > 0 && (
                     <section>
                       <h3 className="text-sm font-bold text-blue-600 mb-3 flex items-center gap-2">
@@ -143,16 +186,34 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         仅在源目录 ({diffData.sourceOnly.length})
                       </h3>
                       <div className="space-y-2">
-                        {diffData.sourceOnly.slice(0, MAX_DISPLAY).map((file, i) => (
-                          <div key={i} className="bg-blue-50/30 border border-blue-100 rounded-xl p-3 flex items-center justify-between">
-                            <span className="text-sm font-mono text-slate-700 truncate max-w-md">{file.path}</span>
-                            <span className="text-[11px] font-bold text-blue-600">{formatSize(file.size)}</span>
+                        {diffData.sourceOnly.slice(0, MAX_DISPLAY).map((file, i) => !resolvedPaths.has(file.path) && (
+                          <div key={i} className="bg-blue-50/30 border border-blue-100 rounded-xl p-3 flex items-center justify-between group">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <button 
+                                onClick={() => handleReveal(file.path, 'source')}
+                                className="p-1.5 hover:bg-white rounded-lg text-blue-400 hover:text-blue-600 transition-all shrink-0"
+                                title="在访达/资源管理器中定位"
+                              >
+                                <MapPin size={14} />
+                              </button>
+                              <span className="text-sm font-mono text-slate-700 truncate max-w-md">{file.path}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-[11px] font-bold text-blue-600">{formatSize(file.size)}</span>
+                              <button
+                                onClick={() => handleSyncFile(file.path, 'sourceToTarget')}
+                                className="px-2 py-1 bg-blue-600 text-white text-[10px] font-bold rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                同步到目标端
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
                     </section>
                   )}
 
+                  {/* 仅在目标目录 */}
                   {diffData.targetOnly.length > 0 && (
                     <section>
                       <h3 className="text-sm font-bold text-emerald-600 mb-3 flex items-center gap-2">
@@ -160,10 +221,27 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         仅在目标目录 ({diffData.targetOnly.length})
                       </h3>
                       <div className="space-y-2">
-                        {diffData.targetOnly.slice(0, MAX_DISPLAY).map((file, i) => (
-                          <div key={i} className="bg-emerald-50/30 border border-emerald-100 rounded-xl p-3 flex items-center justify-between">
-                            <span className="text-sm font-mono text-slate-700 truncate max-w-md">{file.path}</span>
-                            <span className="text-[11px] font-bold text-emerald-600">{formatSize(file.size)}</span>
+                        {diffData.targetOnly.slice(0, MAX_DISPLAY).map((file, i) => !resolvedPaths.has(file.path) && (
+                          <div key={i} className="bg-emerald-50/30 border border-emerald-100 rounded-xl p-3 flex items-center justify-between group">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <button 
+                                onClick={() => handleReveal(file.path, 'target')}
+                                className="p-1.5 hover:bg-white rounded-lg text-emerald-400 hover:text-emerald-600 transition-all shrink-0"
+                                title="在访达/资源管理器中定位"
+                              >
+                                <MapPin size={14} />
+                              </button>
+                              <span className="text-sm font-mono text-slate-700 truncate max-w-md">{file.path}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-[11px] font-bold text-emerald-600">{formatSize(file.size)}</span>
+                              <button
+                                onClick={() => handleSyncFile(file.path, 'targetToSource')}
+                                className="px-2 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                同步到源端
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -171,23 +249,6 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                   )}
                 </>
               )}
-
-              {/* 忽略规则 */}
-              <section className="pt-4 border-t border-slate-100">
-                <div className="bg-slate-50 rounded-2xl p-4">
-                  <h3 className="text-xs font-bold text-slate-400 mb-3 flex items-center gap-2 uppercase tracking-wider">
-                    <ShieldAlert size={14} />
-                    自动忽略的规则 (不参与对比与同步)
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {ignorePatterns.map((pattern, i) => (
-                      <span key={i} className="px-2.5 py-1 bg-white border border-slate-200 text-slate-500 rounded-lg text-[11px] font-mono shadow-sm">
-                        {pattern}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </section>
             </>
           )}
         </div>

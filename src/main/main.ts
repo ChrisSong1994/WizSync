@@ -185,6 +185,48 @@ ipcMain.handle("get-ignore-patterns", () => {
   return IGNORE_PATTERNS;
 });
 
+ipcMain.handle("sync-single-file", async (_event, taskId: string, filePath: string, direction: 'sourceToTarget' | 'targetToSource') => {
+  const tasks = syncStore.getTasks();
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) return false;
+
+  const src = direction === 'sourceToTarget' 
+    ? path.join(task.sourcePath, filePath) 
+    : path.join(task.targetPath, filePath);
+  
+  const dest = direction === 'sourceToTarget' 
+    ? path.join(task.targetPath, filePath) 
+    : path.join(task.sourcePath, filePath);
+
+  try {
+    const destDir = path.dirname(dest);
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+    fs.copyFileSync(src, dest);
+    logManager.write(taskId, `[手动同步] 已将文件从 ${direction === 'sourceToTarget' ? '源端' : '目标端'} 覆盖到另一端: ${filePath}`);
+    return true;
+  } catch (err) {
+    console.error("单文件同步失败:", err);
+    return false;
+  }
+});
+
+ipcMain.handle("reveal-in-explorer", async (_event, taskId: string, filePath: string, side: 'source' | 'target') => {
+  const tasks = syncStore.getTasks();
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) return false;
+
+  const basePath = side === 'source' ? task.sourcePath : task.targetPath;
+  const fullPath = path.join(basePath, filePath);
+
+  if (fs.existsSync(fullPath)) {
+    shell.showItemInFolder(fullPath);
+    return true;
+  }
+  return false;
+});
+
 ipcMain.handle("open-log-folder", (_event, id: string) => {
   const dir = logManager.getTaskDir(id);
   shell.openPath(dir);

@@ -34,6 +34,7 @@ export interface ElectronAPI {
   openLogFolder: (id: string) => Promise<boolean>
   getIgnorePatterns: () => Promise<string[]>
   syncSingleFile: (taskId: string, filePath: string, direction: 'sourceToTarget' | 'targetToSource') => Promise<boolean>
+  revealInFileExplorer: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
   onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; sourceStats?: any; targetStats?: any }) => void) => void
   onSyncLog: (callback: (data: { id: string; log: string }) => void) => void
   onCompareProgress: (callback: (data: { id: string; count: number }) => void) => void
