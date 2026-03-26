@@ -4,41 +4,53 @@ import path from "node:path";
 
 /**
  * 日志管理器类 (LogManager)
- * 负责应用同步日志的持久化存储、读取、轮转和清理
+ * 负责应用同步日志的持久化存储、读取和清理。
+ * 支持按任务 ID 分文件夹存储，并按日期（天）分割文件。
  */
 export class LogManager {
-  private logsDir: string;
-  private readonly MAX_LOG_SIZE = 5 * 1024 * 1024; // 单个日志文件最大 5MB
+  private logsBaseDir: string;
 
   constructor() {
-    this.logsDir = path.join(app.getPath("userData"), "logs");
-    this.ensureDirectoryExists();
+    this.logsBaseDir = path.join(app.getPath("userData"), "logs");
+    this.ensureDirectoryExists(this.logsBaseDir);
   }
 
   /**
-   * 确保日志目录存在
+   * 确保目录存在
    */
-  private ensureDirectoryExists() {
-    if (!fs.existsSync(this.logsDir)) {
-      fs.mkdirSync(this.logsDir, { recursive: true });
+  private ensureDirectoryExists(dir: string) {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
   }
 
   /**
-   * 将日志内容持久化到文件
+   * 获取当前日期的字符串 (yyyy-mm-dd)
+   */
+  private getTodayString(): string {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * 将日志内容按天持久化到任务文件夹下
    * @param id 任务 ID
    * @param content 日志内容
    */
   write(id: string, content: string) {
-    const logPath = path.join(this.logsDir, `${id}.log`);
-    const timestamp = new Date().toLocaleString();
+    const taskLogsDir = path.join(this.logsBaseDir, id);
+    this.ensureDirectoryExists(taskLogsDir);
+
+    const logFileName = `${this.getTodayString()}.log`;
+    const logPath = path.join(taskLogsDir, logFileName);
+    
+    const timestamp = new Date().toLocaleTimeString();
     const formattedLog = `[${timestamp}] ${content}\n`;
     
     try {
-      // 检查文件大小，实现简易的日志轮转（备份旧日志）
-      if (fs.existsSync(logPath) && fs.statSync(logPath).size > this.MAX_LOG_SIZE) {
-        fs.renameSync(logPath, `${logPath}.old`);
-      }
       fs.appendFileSync(logPath, formattedLog);
     } catch (err) {
       console.error(`[LogManager] 写入日志失败 (${id}):`, err);
@@ -46,15 +58,26 @@ export class LogManager {
   }
 
   /**
-   * 获取指定任务的完整日志
+   * 获取指定任务的所有日志（合并最近 7 天的日志）
    * @param id 任务 ID
    */
   get(id: string): string {
-    const logPath = path.join(this.logsDir, `${id}.log`);
+    const taskLogsDir = path.join(this.logsBaseDir, id);
+    if (!fs.existsSync(taskLogsDir)) return "";
+
     try {
-      if (fs.existsSync(logPath)) {
-        return fs.readFileSync(logPath, "utf-8");
+      const files = fs.readdirSync(taskLogsDir)
+        .filter(f => f.endsWith(".log"))
+        .sort() // 按日期排序
+        .slice(-7); // 仅加载最近 7 天的日志，防止模态框加载压力过大
+
+      let combinedLogs = "";
+      for (const file of files) {
+        const date = file.replace(".log", "");
+        combinedLogs += `\n--- 日期: ${date} ---\n`;
+        combinedLogs += fs.readFileSync(path.join(taskLogsDir, file), "utf-8");
       }
+      return combinedLogs;
     } catch (err) {
       console.error(`[LogManager] 读取日志失败 (${id}):`, err);
     }
@@ -62,19 +85,15 @@ export class LogManager {
   }
 
   /**
-   * 清理指定任务的日志文件
+   * 清理指定任务的所有日志文件
    * @param id 任务 ID
    */
   clear(id: string) {
-    const logPath = path.join(this.logsDir, `${id}.log`);
+    const taskLogsDir = path.join(this.logsBaseDir, id);
     try {
-      if (fs.existsSync(logPath)) {
-        fs.unlinkSync(logPath);
-      }
-      // 同时清理备份文件
-      const oldLogPath = `${logPath}.old`;
-      if (fs.existsSync(oldLogPath)) {
-        fs.unlinkSync(oldLogPath);
+      if (fs.existsSync(taskLogsDir)) {
+        // 递归删除任务文件夹及其下的所有日志
+        fs.rmSync(taskLogsDir, { recursive: true, force: true });
       }
     } catch (err) {
       console.error(`[LogManager] 清理日志失败 (${id}):`, err);

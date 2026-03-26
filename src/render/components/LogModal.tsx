@@ -79,24 +79,27 @@ export const LogModal: React.FC<LogModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl overflow-hidden flex flex-col h-[90vh] animate-in zoom-in-95 duration-200">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-          <div className="flex items-center gap-2">
+        <div 
+          className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50"
+          style={{ WebkitAppRegion: "drag" } as any}
+        >
+          <div className="flex items-center gap-2" style={{ WebkitAppRegion: "no-drag" } as any}>
             <Clock size={18} className="text-blue-600" />
             <h2 className="text-xl font-bold text-slate-800">
               同步日志 - {taskName}
             </h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1" style={{ WebkitAppRegion: "no-drag" } as any}>
             <button
               onClick={handleClearLogs}
               title="清空日志"
-              className="p-2 hover:bg-red-50 rounded-full text-slate-400 hover:text-red-500 transition-all"
+              className="p-2 hover:bg-red-50 rounded-full text-slate-400 hover:text-red-500 transition-all flex items-center justify-center"
             >
               <Trash2 size={18} />
             </button>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-slate-200 rounded-full text-slate-400 transition-colors"
+              className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-slate-600 transition-colors flex items-center justify-center"
             >
               <X size={20} />
             </button>
