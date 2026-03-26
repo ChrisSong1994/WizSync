@@ -23,7 +23,7 @@
     "appId": "com.wizsync.app",
     "productName": "WizSync",
     "directories": {
-      "output": "dist"
+      "output": "release"
     },
     "asarUnpack": [
       "src/resources/bin/**/*"
@@ -31,7 +31,7 @@
     "files": [
       "dist-electron/**/*",
       "dist/**/*",
-      "src/resources/**/*",
+      "src/resources/bin/**/*",
       "package.json"
     ],
     "mac": {
