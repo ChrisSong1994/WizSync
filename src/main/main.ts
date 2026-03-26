@@ -28,13 +28,10 @@ export function getUnisonPath(): string {
 
   const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
   
-  if (app.isPackaged) {
-    // 打包后的应用，二进制文件位于 resources 目录
-    return path.join(process.resourcesPath, "src/resources/bin", arch, "unison");
-  } else {
-    // 开发环境下
-    return path.join(APP_ROOT, "src/resources/bin", arch, "unison");
-  }
+  // 使用 app.getAppPath() 获取应用根目录，无论是开发还是生产环境都能准确定位 src
+  const resourcePath = path.join(app.getAppPath(), "src/resources/bin", arch, "unison");
+  
+  return resourcePath;
 }
 
 export const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];

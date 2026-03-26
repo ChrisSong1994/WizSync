@@ -219,12 +219,18 @@ export class SyncManager {
         outputBuffer = "";
       }
     };
+proc.stdout.on("data", (data) => {
+  outputBuffer += data.toString();
+  if (outputBuffer.length > 2000) flushBuffer();
+});
 
-    proc.stdout.on("data", (data) => {
-      outputBuffer += data.toString();
-      if (outputBuffer.length > 2000) flushBuffer();
-    });
+proc.stderr.on("data", (data) => {
+  const errorMsg = data.toString();
+  logManager.write(task.id, `[stderr] ${errorMsg}`);
+  this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${errorMsg}` });
+});
 
+// 进程结束逻辑
     proc.on("close", async (code) => {
       flushBuffer();
       this.activeProcesses.delete(task.id);

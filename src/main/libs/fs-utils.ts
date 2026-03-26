@@ -18,11 +18,15 @@ export const IGNORE_PATTERNS = [
  * 判断路径是否应该被忽略
  */
 function isIgnored(name: string): boolean {
-  return IGNORE_PATTERNS.some(pattern => name.includes(name.startsWith('.') ? pattern : `/${pattern}/` || name === pattern));
+  return IGNORE_PATTERNS.some(pattern => {
+    if (name === pattern) return true;
+    if (name.startsWith('.') && name === pattern) return true;
+    return name.includes(`/${pattern}/`) || name.startsWith(`${pattern}/`) || name.endsWith(`/${pattern}`);
+  });
 }
 
 /**
- * 更鲁棒的忽略检查
+ * 更鲁棒的忽略检查（供统计和列表扫描使用）
  */
 function shouldSkip(name: string): boolean {
   return IGNORE_PATTERNS.some(p => name === p || name.includes(p));
