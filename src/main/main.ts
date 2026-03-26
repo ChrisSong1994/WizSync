@@ -142,6 +142,15 @@ ipcMain.handle("stop-sync", (_event, id: string) => {
   return true;
 });
 
+ipcMain.handle("get-persistent-logs", (_event, id: string) => {
+  return syncManager.getLogs(id);
+});
+
+ipcMain.handle("clear-persistent-logs", (_event, id: string) => {
+  syncManager.clearLogs(id);
+  return true;
+});
+
 ipcMain.handle("compare-directories", async (_event, id: string) => {
   const tasks = syncStore.getTasks();
   const task = tasks.find((t) => t.id === id);

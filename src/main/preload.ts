@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopSync: (id: string) => ipcRenderer.invoke('stop-sync', id),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   compareDirectories: (id: string) => ipcRenderer.invoke('compare-directories', id),
+  getPersistentLogs: (id: string) => ipcRenderer.invoke('get-persistent-logs', id),
+  clearPersistentLogs: (id: string) => ipcRenderer.invoke('clear-persistent-logs', id),
   onSyncStatus: (callback: any) => ipcRenderer.on('sync-status', (_event, value) => callback(value)),
   onSyncLog: (callback: any) => ipcRenderer.on('sync-log', (_event, value) => callback(value)),
 })

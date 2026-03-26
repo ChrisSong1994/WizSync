@@ -14,7 +14,6 @@ function App() {
   const [isModalOpen, setIsModalOpen] = useState(false); // 是否显示新增/编辑弹窗
   const [currentTask, setCurrentTask] = useState<Partial<SyncTask> | null>(null); // 当前正在操作的任务
   const [modalError, setModalError] = useState<string | null>(null); // 弹窗中的错误提示
-  const [logs, setLogs] = useState<Record<string, string[]>>({}); // 任务日志存储
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null); // 当前选中的日志任务 ID
   const [diffData, setDiffData] = useState<DiffResult | null>(null); // 文件差异结果
   const [comparingTaskId, setComparingTaskId] = useState<string | null>(null); // 正在执行对比的任务 ID
@@ -32,14 +31,6 @@ function App() {
       setTasks((prev) =>
         prev.map((t) => (t.id === id ? { ...t, status, lastSyncTime, sourceStats, targetStats } : t)),
       );
-    });
-
-    // 监听同步日志
-    window.electronAPI.onSyncLog(({ id, log }) => {
-      setLogs((prev) => ({
-        ...prev,
-        [id]: [...(prev[id] || []).slice(-99), log], // 保留最近 100 条日志
-      }));
     });
   }, []);
 
@@ -189,7 +180,6 @@ function App() {
         <LogModal
           taskId={selectedTaskId}
           tasks={tasks}
-          logs={logs}
           onClose={() => setSelectedTaskId(null)}
         />
       )}

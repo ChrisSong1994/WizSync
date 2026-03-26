@@ -27,6 +27,8 @@ export interface ElectronAPI {
   stopSync: (id: string) => Promise<boolean>
   selectDirectory: () => Promise<string | null>
   compareDirectories: (id: string) => Promise<DiffResult>
+  getPersistentLogs: (id: string) => Promise<string>
+  clearPersistentLogs: (id: string) => Promise<boolean>
   onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; sourceStats?: any; targetStats?: any }) => void) => void
   onSyncLog: (callback: (data: { id: string; log: string }) => void) => void
 }
