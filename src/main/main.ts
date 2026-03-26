@@ -6,7 +6,8 @@ import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
 import { logManager } from "./libs/logs";
 import { TrayManager } from "./libs/tray";
-import { getDirStats, getAllFiles, IGNORE_PATTERNS, getDiskSpace } from "./libs/fs-utils";
+import { getDirStats, getAllFiles, IGNORE_PATTERNS } from "./libs/fs-utils";
+import { diskManager } from "./libs/disk";
 import { SyncTask } from "./libs/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -140,8 +141,8 @@ ipcMain.handle("get-tasks", () => syncStore.getTasks());
 ipcMain.handle("save-task", async (_event, task: SyncTask) => {
   task.sourceStats = await getDirStats(task.sourcePath);
   task.targetStats = await getDirStats(task.targetPath);
-  task.sourceDisk = getDiskSpace(task.sourcePath) || undefined;
-  task.targetDisk = getDiskSpace(task.targetPath) || undefined;
+  task.sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
+  task.targetDisk = diskManager.getDiskSpace(task.targetPath) || undefined;
   return syncStore.saveTask(task);
 });
 
