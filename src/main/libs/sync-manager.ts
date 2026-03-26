@@ -4,6 +4,7 @@ import { BrowserWindow } from "electron";
 import { SyncTask } from "./types";
 import { syncStore } from "./sync-store";
 import { getDirStats } from "./fs-utils";
+import { getUnisonPath } from "../main";
 
 export class SyncManager {
   private activeProcesses: Map<string, ChildProcess> = new Map();
@@ -94,8 +95,20 @@ export class SyncManager {
     if (task.direction === "sourceToTarget") args.push("-force", task.sourcePath);
     else if (task.direction === "targetToSource") args.push("-force", task.targetPath);
 
-    const proc = spawn("unison", args);
+    const unisonPath = getUnisonPath();
+    const proc = spawn(unisonPath, args);
     this.activeProcesses.set(task.id, proc);
+
+    proc.on("error", (err: any) => {
+      this.activeProcesses.delete(task.id);
+      console.error(`Failed to start unison at ${unisonPath}:`, err);
+      let errorMessage = err.message;
+      if (err.code === "ENOENT") {
+        errorMessage = `Error: 'unison' executable not found at ${unisonPath}. Please make sure it exists.`;
+      }
+      this.win?.webContents.send("sync-log", { id: task.id, log: errorMessage });
+      this.updateStatus(task.id, "error");
+    });
 
     proc.stdout.on("data", (data) => {
       this.win?.webContents.send("sync-log", { id: task.id, log: data.toString() });

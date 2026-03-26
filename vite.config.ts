@@ -9,7 +9,6 @@ export default defineConfig({
     react(),
     electron({
       main: {
-        // Shortcut of `build.lib.entry`.
         entry: 'src/main/main.ts',
         vite: {
           build: {
@@ -20,10 +19,8 @@ export default defineConfig({
         },
       },
       preload: {
-        // Shortcut of `build.rollupOptions.input`.
         input: path.join(__dirname, 'src/main/preload.ts'),
       },
-      // Ployfill the Electron and Node.js built-in modules for Renderer process.
       renderer: {},
     }),
   ],

@@ -8,7 +8,30 @@ import { SyncTask } from "./libs/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Fix for production PATH on macOS
+if (process.platform === "darwin") {
+  process.env.PATH = `${process.env.PATH}:/usr/local/bin:/opt/homebrew/bin:/opt/local/bin`;
+}
+
 process.env.APP_ROOT = path.join(__dirname, "..");
+
+export function getUnisonPath(): string {
+  if (process.platform !== "darwin") {
+    return "unison";
+  }
+
+  const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
+  
+  if (app.isPackaged) {
+    // In packaged app, src/resources is copied to the resources directory or app content
+    // Depending on electron-builder, it might be in different places.
+    // Based on package.json "files", it's in the app bundle.
+    return path.join(process.resourcesPath, "src/resources/bin", arch, "unison");
+  } else {
+    // In development
+    return path.join(process.env.APP_ROOT, "src/resources/bin", arch, "unison");
+  }
+}
 
 export const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 export const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");

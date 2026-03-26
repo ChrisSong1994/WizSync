@@ -1,5 +1,6 @@
 import React from "react";
 import { Plus } from "lucide-react";
+import Logo from "../assets/logo.png";
 
 interface HeaderProps {
   onAddTask: () => void;
@@ -17,7 +18,7 @@ export const Header: React.FC<HeaderProps> = ({ onAddTask }) => {
       >
         <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center overflow-hidden shadow-md">
           <img
-            src="/assets/logo.png"
+            src={Logo}
             alt="WizSync Logo"
             className="w-full h-full object-cover"
           />
