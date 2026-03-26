@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WizSync (智同步) - 专业级目录同步工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="icon" type="image/png" href="assets/logo.png">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .gradient-text {
+            background: linear-gradient(135deg, #3b82f6 0%, #2dd4bf 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 overflow-x-hidden">
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 bg-white/80 backdrop-blur-md border-b border-gray-100">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center gap-2">
+                    <img src="assets/logo.png" alt="WizSync Logo" class="h-8 w-8">
+                    <span class="text-xl font-bold tracking-tight">WizSync</span>
+                </div>
+                <div class="hidden md:flex items-center gap-8">
+                    <a href="#features" class="text-gray-600 hover:text-blue-600 transition">功能特性</a>
+                    <a href="#tech" class="text-gray-600 hover:text-blue-600 transition">技术架构</a>
+                    <a href="https://github.com/songjun/WizSync" class="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-full hover:bg-gray-800 transition">
+                        <i data-lucide="github" class="w-4 h-4"></i> GitHub
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="pt-32 pb-20 px-4">
+        <div class="max-w-5xl mx-auto text-center">
+            <h1 class="text-5xl md:text-7xl font-bold mb-6 tracking-tight">
+                让数据同步更<span class="gradient-text">简单</span>、更<span class="gradient-text">安全</span>
+            </h1>
+            <p class="text-xl text-gray-600 mb-10 max-w-2xl mx-auto leading-relaxed">
+                WizSync 是一款基于 Electron 和 Unison 构建的专业级目录同步工具。
+                为开发者和专业用户提供极其稳定、实时且可视化的本地/跨磁盘目录同步解决方案。
+            </p>
+            <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                <a href="https://github.com/songjun/WizSync/releases" class="px-8 py-4 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-200">
+                    立即下载
+                </a>
+                <a href="https://github.com/songjun/WizSync" class="px-8 py-4 bg-white border border-gray-200 text-gray-700 rounded-xl font-semibold hover:border-blue-300 hover:bg-blue-50 transition">
+                    查看源码
+                </a>
+            </div>
+
+            <!-- Product Screenshot -->
+            <div class="mt-16 mb-16 relative">
+                <div class="absolute inset-0 bg-blue-500/10 blur-3xl rounded-full scale-90 -z-10"></div>
+                <img src="assets/ScreenShot.png" alt="WizSync Screenshot" class="rounded-2xl shadow-2xl border border-gray-200 w-full max-w-4xl mx-auto">
+            </div>
+
+            <!-- MacOS Permission Tip -->
+            <div class="max-w-2xl mx-auto p-6 bg-amber-50 border border-amber-100 rounded-2xl text-left text-sm text-amber-800">
+                <p class="font-bold mb-2 flex items-center gap-2 text-amber-900">
+                    <i data-lucide="info" class="w-4 h-4"></i>
+                    温馨提示：
+                </p>
+                <p class="mb-2">在 MacOS 系统下安装出现权限问题，请在终端执行以下命令：</p>
+                <div class="space-y-2 mb-4">
+                    <code class="block bg-amber-100/50 p-2 rounded border border-amber-200 font-mono text-xs">sudo spctl --master-disable # 允许任何来源</code>
+                    <code class="block bg-amber-100/50 p-2 rounded border border-amber-200 font-mono text-xs">xattr -d com.apple.quarantine /Applications/WizSync.app # 移除隔离属性</code>
+                </div>
+                <p class="text-xs text-amber-700">注意⚠️：移除隔离属性会绕过 macOS 的安全检查，仅对完全信任的文件使用此命令，避免运行恶意软件。</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl font-bold mb-4">核心特性</h2>
+                <p class="text-gray-600">精心设计，只为更流畅的同步体验</p>
+            </div>
+            <div class="grid md:grid-cols-3 gap-8">
+                <!-- Feature 1 -->
+                <div class="p-8 rounded-2xl bg-gray-50 border border-gray-100 hover:shadow-xl transition group">
+                    <div class="w-12 h-12 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition">
+                        <i data-lucide="repeat" class="w-6 h-6"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">双向同步能力</h3>
+                    <p class="text-gray-600">基于成熟的 Unison 算法，智能识别双向修改，安全处理文件冲突。</p>
+                </div>
+                <!-- Feature 2 -->
+                <div class="p-8 rounded-2xl bg-gray-50 border border-gray-100 hover:shadow-xl transition group">
+                    <div class="w-12 h-12 bg-green-100 text-green-600 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition">
+                        <i data-lucide="zap" class="w-6 h-6"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">实时监控</h3>
+                    <p class="text-gray-600">利用 Chokidar 毫秒级捕获文件变动，实现“修改即同步”的无感体验。</p>
+                </div>
+                <!-- Feature 3 -->
+                <div class="p-8 rounded-2xl bg-gray-50 border border-gray-100 hover:shadow-xl transition group">
+                    <div class="w-12 h-12 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition">
+                        <i data-lucide="layout-dashboard" class="w-6 h-6"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">可视化仪表盘</h3>
+                    <p class="text-gray-600">实时查看状态与进度，详尽的统计信息，图形化的文件差异对比 (Diff)。</p>
+                </div>
+                <!-- Feature 4 -->
+                <div class="p-8 rounded-2xl bg-gray-50 border border-gray-100 hover:shadow-xl transition group">
+                    <div class="w-12 h-12 bg-orange-100 text-orange-600 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition">
+                        <i data-lucide="file-text" class="w-6 h-6"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">深度日志系统</h3>
+                    <p class="text-gray-600">按任务、按日期自动分割日志。支持日志自动轮转，一键跳转日志文件夹。</p>
+                </div>
+                <!-- Feature 5 -->
+                <div class="p-8 rounded-2xl bg-gray-50 border border-gray-100 hover:shadow-xl transition group">
+                    <div class="w-12 h-12 bg-pink-100 text-pink-600 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition">
+                        <i data-lucide="mouse-pointer-2" class="w-6 h-6"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">Tray 菜单控制</h3>
+                    <p class="text-gray-600">通过托盘图标快速监控正在运行的任务，无需打开主窗口即可掌控全局。</p>
+                </div>
+                <!-- Feature 6 -->
+                <div class="p-8 rounded-2xl bg-gray-50 border border-gray-100 hover:shadow-xl transition group">
+                    <div class="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition">
+                        <i data-lucide="shield-check" class="w-6 h-6"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">冲突与嵌套保护</h3>
+                    <p class="text-gray-600">内置路径重复与嵌套检查，防止配置错误导致的同步回环或文件损坏。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Simplified Tech Section -->
+    <section id="tech" class="py-16 bg-gray-50 border-t border-gray-100">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 class="text-2xl font-bold mb-8">稳定、高效、现代化的技术底座</h2>
+            <div class="flex flex-wrap justify-center gap-x-12 gap-y-6 text-gray-500 font-medium">
+                <div class="flex items-center gap-2"><i data-lucide="cpu" class="w-5 h-5"></i> Unison 引擎驱动</div>
+                <div class="flex items-center gap-2"><i data-lucide="monitor" class="w-5 h-5"></i> Electron 跨平台</div>
+                <div class="flex items-center gap-2"><i data-lucide="code-2" class="w-5 h-5"></i> React & TS 开发</div>
+                <div class="flex items-center gap-2"><i data-lucide="activity" class="w-5 h-5"></i> Chokidar 实时监控</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-12 border-t border-gray-100 bg-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-gray-500">
+            <div class="flex items-center justify-center gap-2 mb-6">
+                <img src="assets/logo.png" alt="WizSync Logo" class="h-6 w-6 grayscale opacity-50">
+                <span class="font-semibold tracking-tight text-gray-400 uppercase text-xs">WizSync</span>
+            </div>
+            <p>&copy; 2024 WizSync Project. Released under MIT License.</p>
+        </div>
+    </footer>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+    </script>
+</body>
+</html>
