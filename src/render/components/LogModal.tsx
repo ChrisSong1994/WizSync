@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { X, Clock, Trash2 } from "lucide-react";
+import { X, Clock, Trash2, FolderOpen } from "lucide-react";
 import { SyncTask } from "../types";
 import { cn } from "../utils";
 
@@ -36,12 +36,12 @@ export const LogModal: React.FC<LogModalProps> = ({
 
     window.electronAPI.onSyncLog(handleLog);
 
-    // 自动滚动到底部
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    return () => {
+      // 清理监听器（如果 preload 提供了移除方法的话，目前是全局监听）
+    };
   }, [taskId]);
 
+  // 当日志更新时自动滚动到底部
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -67,8 +67,8 @@ export const LogModal: React.FC<LogModalProps> = ({
       <div
         key={index}
         className={cn(
-          "mb-1 whitespace-pre-wrap break-all",
-          isError ? "text-red-400" : "text-emerald-400/90",
+          "mb-1 whitespace-pre-wrap break-all text-emerald-400/90",
+          isError && "text-red-400"
         )}
       >
         {line}
@@ -80,16 +80,23 @@ export const LogModal: React.FC<LogModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl overflow-hidden flex flex-col h-[90vh] animate-in zoom-in-95 duration-200">
         <div 
-          className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50"
+          className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50"
           style={{ WebkitAppRegion: "drag" } as any}
         >
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: "no-drag" } as any}>
-            <Clock size={18} className="text-blue-600" />
-            <h2 className="text-xl font-bold text-slate-800">
+            <Clock size={16} className="text-blue-600" />
+            <h2 className="text-lg font-bold text-slate-800">
               同步日志 - {taskName}
             </h2>
           </div>
           <div className="flex items-center gap-1" style={{ WebkitAppRegion: "no-drag" } as any}>
+            <button
+              onClick={() => window.electronAPI.openLogFolder(taskId)}
+              title="打开日志文件夹"
+              className="p-2 hover:bg-blue-50 rounded-full text-slate-400 hover:text-blue-600 transition-all flex items-center justify-center"
+            >
+              <FolderOpen size={18} />
+            </button>
             <button
               onClick={handleClearLogs}
               title="清空日志"

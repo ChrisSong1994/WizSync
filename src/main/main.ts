@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
+import { logManager } from "./libs/logs";
 import { TrayManager } from "./libs/tray";
 import { getDirStats, getAllFiles } from "./libs/fs-utils";
 import { SyncTask } from "./libs/types";
@@ -148,6 +149,12 @@ ipcMain.handle("get-persistent-logs", (_event, id: string) => {
 
 ipcMain.handle("clear-persistent-logs", (_event, id: string) => {
   syncManager.clearLogs(id);
+  return true;
+});
+
+ipcMain.handle("open-log-folder", (_event, id: string) => {
+  const dir = logManager.getTaskDir(id);
+  shell.openPath(dir);
   return true;
 });
 

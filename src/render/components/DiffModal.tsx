@@ -30,10 +30,10 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl overflow-hidden flex flex-col h-[90vh] animate-in zoom-in-95 duration-200">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <div className="flex items-center gap-2">
-            <FileSearch size={18} className="text-blue-600" />
-            <h2 className="text-xl font-bold text-slate-800">
+            <FileSearch size={16} className="text-blue-600" />
+            <h2 className="text-lg font-bold text-slate-800">
               目录对比 - {taskName}
             </h2>
           </div>
@@ -82,7 +82,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         </span>
                         <div className="flex items-center gap-4 text-[11px]">
                           <div className="text-right">
-                            <div className="text-slate-400 uppercase font-bold text-[9px]">
+                            <div className="text-slate-400 uppercase font-bold text-[12px]">
                               源端
                             </div>
                             <div className="text-slate-600 font-medium">
@@ -91,7 +91,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                           </div>
                           <ArrowRight size={12} className="text-slate-300" />
                           <div className="text-left">
-                            <div className="text-slate-400 uppercase font-bold text-[9px]">
+                            <div className="text-slate-400 uppercase font-bold text-[12px]">
                               目标端
                             </div>
                             <div className="text-slate-600 font-medium">

@@ -58,6 +58,15 @@ export class LogManager {
   }
 
   /**
+   * 获取指定任务的日志目录路径
+   */
+  getTaskDir(id: string): string {
+    const taskLogsDir = path.join(this.logsBaseDir, id);
+    this.ensureDirectoryExists(taskLogsDir);
+    return taskLogsDir;
+  }
+
+  /**
    * 获取指定任务的所有日志（合并最近 7 天的日志）
    * @param id 任务 ID
    */

@@ -86,7 +86,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 {task.sourcePath.split("/").pop()}
               </span>
               {task.sourceStats && (
-                <span className="text-[10px] text-slate-400 mt-0.5 ml-1">
+                <span className="text-[12px] text-slate-400 mt-0.5 ml-1">
                   {formatSize(task.sourceStats.size)} · {task.sourceStats.count} 文件
                 </span>
               )}
@@ -106,7 +106,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 {task.targetPath.split("/").pop()}
               </span>
               {task.targetStats && (
-                <span className="text-[10px] text-slate-400 mt-0.5 ml-1">
+                <span className="text-[12px] text-slate-400 mt-0.5 ml-1">
                   {formatSize(task.targetStats.size)} · {task.targetStats.count} 文件
                 </span>
               )}
@@ -159,13 +159,13 @@ export const TaskItem: React.FC<TaskItemProps> = ({
       {/* 最近同步信息 */}
       {task.lastSyncTime && (
         <div className="px-5 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-          <span className="text-[11px] text-slate-400 flex items-center gap-1">
+          <span className="text-[12px] text-slate-400 flex items-center gap-1">
             <Clock size={12} />
             最近同步: {task.lastSyncTime}
           </span>
           <button
             onClick={() => onShowLogs(task.id)}
-            className="text-[11px] font-bold text-blue-600 hover:underline"
+            className="text-[12px] font-bold text-blue-600 hover:underline"
           >
             查看日志
           </button>
