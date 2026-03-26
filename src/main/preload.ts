@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearPersistentLogs: (id: string) => ipcRenderer.invoke('clear-persistent-logs', id),
   openLogFolder: (id: string) => ipcRenderer.invoke('open-log-folder', id),
   getIgnorePatterns: () => ipcRenderer.invoke('get-ignore-patterns'),
+  syncSingleFile: (taskId: string, filePath: string, direction: string) => 
+    ipcRenderer.invoke('sync-single-file', taskId, filePath, direction),
   onSyncStatus: (callback: any) => ipcRenderer.on('sync-status', (_event, value) => callback(value)),
   onSyncLog: (callback: any) => ipcRenderer.on('sync-log', (_event, value) => callback(value)),
+  onCompareProgress: (callback: any) => ipcRenderer.on('compare-progress', (_event, value) => callback(value)),
 })

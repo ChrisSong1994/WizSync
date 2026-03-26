@@ -151,8 +151,14 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={() => onCompare(task.id)}
-            className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
-            title="对比差异"
+            disabled={task.status === "syncing"}
+            className={cn(
+              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
+              task.status === "syncing"
+                ? "bg-slate-50 text-slate-300 cursor-not-allowed"
+                : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+            )}
+            title={task.status === "syncing" ? "同步进行中，无法对比" : "对比差异"}
           >
             <FileSearch size={20} />
           </button>

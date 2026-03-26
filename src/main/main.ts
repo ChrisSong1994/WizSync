@@ -191,13 +191,20 @@ ipcMain.handle("open-log-folder", (_event, id: string) => {
   return true;
 });
 
-ipcMain.handle("compare-directories", async (_event, id: string) => {
+ipcMain.handle("compare-directories", async (event, id: string) => {
   const tasks = syncStore.getTasks();
   const task = tasks.find((t) => t.id === id);
   if (!task) throw new Error("Task not found");
 
-  const sourceFiles = getAllFiles(task.sourcePath);
-  const targetFiles = getAllFiles(task.targetPath);
+  const sendProgress = (count: number) => {
+    event.sender.send("compare-progress", { id, count });
+  };
+
+  // 并行扫描两个目录，并实时向渲染进程报告进度
+  const [sourceFiles, targetFiles] = await Promise.all([
+    getAllFiles(task.sourcePath, task.sourcePath, { count: 0 }, sendProgress),
+    getAllFiles(task.targetPath, task.targetPath, { count: 0 }, sendProgress)
+  ]);
 
   const diff = {
     sourceOnly: [] as any[],
@@ -205,7 +212,8 @@ ipcMain.handle("compare-directories", async (_event, id: string) => {
     different: [] as any[],
   };
 
-  sourceFiles.forEach((sInfo, relPath) => {
+  let processedCount = 0;
+  for (const [relPath, sInfo] of sourceFiles) {
     const tInfo = targetFiles.get(relPath);
     if (!tInfo) {
       diff.sourceOnly.push({ path: relPath, size: sInfo.size });
@@ -221,13 +229,18 @@ ipcMain.handle("compare-directories", async (_event, id: string) => {
         targetMtime: tInfo.mtime,
       });
     }
-  });
+    
+    processedCount++;
+    if (processedCount % 500 === 0) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
 
-  targetFiles.forEach((tInfo, relPath) => {
+  for (const [relPath, tInfo] of targetFiles) {
     if (!sourceFiles.has(relPath)) {
       diff.targetOnly.push({ path: relPath, size: tInfo.size });
     }
-  });
+  }
 
   return diff;
 });
