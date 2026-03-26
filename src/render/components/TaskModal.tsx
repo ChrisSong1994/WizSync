@@ -5,6 +5,7 @@ import { cn } from "../utils";
 
 interface TaskModalProps {
   currentTask: Partial<SyncTask> | null;
+  error?: string | null;
   onClose: () => void;
   onSave: () => void;
   onSelectDir: (field: "sourcePath" | "targetPath") => void;
@@ -13,6 +14,7 @@ interface TaskModalProps {
 
 export const TaskModal: React.FC<TaskModalProps> = ({
   currentTask,
+  error,
   onClose,
   onSave,
   onSelectDir,
@@ -35,6 +37,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         </div>
 
         <div className="p-6 space-y-5 flex-1 overflow-y-auto">
+          {/* 错误提示信息 */}
+          {error && (
+            <div className="bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl text-xs font-bold animate-in slide-in-from-top-2 duration-200">
+              ⚠️ {error}
+            </div>
+          )}
+
           {/* 任务名称 */}
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-slate-700 ml-1">

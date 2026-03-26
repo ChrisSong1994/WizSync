@@ -13,6 +13,7 @@ function App() {
   const [tasks, setTasks] = useState<SyncTask[]>([]); // 任务列表
   const [isModalOpen, setIsModalOpen] = useState(false); // 是否显示新增/编辑弹窗
   const [currentTask, setCurrentTask] = useState<Partial<SyncTask> | null>(null); // 当前正在操作的任务
+  const [modalError, setModalError] = useState<string | null>(null); // 弹窗中的错误提示
   const [logs, setLogs] = useState<Record<string, string[]>>({}); // 任务日志存储
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null); // 当前选中的日志任务 ID
   const [diffData, setDiffData] = useState<DiffResult | null>(null); // 文件差异结果
@@ -46,6 +47,7 @@ function App() {
    * 初始化新增任务
    */
   const handleAddTask = () => {
+    setModalError(null);
     setCurrentTask({
       id: Math.random().toString(36).substr(2, 9),
       name: "",
@@ -63,6 +65,7 @@ function App() {
    * 编辑现有任务
    */
   const handleEditTask = (task: SyncTask) => {
+    setModalError(null);
     setCurrentTask(task);
     setIsModalOpen(true);
   };
@@ -80,10 +83,37 @@ function App() {
    */
   const handleSaveTask = async () => {
     if (currentTask && currentTask.name && currentTask.sourcePath && currentTask.targetPath) {
+      setModalError(null);
+      // 路径冲突校验
+      for (const task of tasks) {
+        // 如果是编辑现有任务，跳过自身对比
+        if (task.id === currentTask.id) continue;
+
+        const existingPaths = [task.sourcePath, task.targetPath];
+        const newPaths = [currentTask.sourcePath!, currentTask.targetPath!];
+
+        for (const newPath of newPaths) {
+          for (const existingPath of existingPaths) {
+            // 1. 完全相同的路径
+            if (newPath === existingPath) {
+              setModalError(`路径冲突：目录 "${newPath}" 已在任务 "${task.name}" 中使用。`);
+              return;
+            }
+            // 2. 嵌套关系检查 (newPath 是 existingPath 的子目录或父目录)
+            if (newPath.startsWith(existingPath + '/') || existingPath.startsWith(newPath + '/')) {
+              setModalError(`路径嵌套冲突：目录 "${newPath}" 与任务 "${task.name}" 中的 "${existingPath}" 存在嵌套关系。请避免重叠同步。`);
+              return;
+            }
+          }
+        }
+      }
+
       const updatedTasks = await window.electronAPI.saveTask(currentTask as SyncTask);
       setTasks(updatedTasks);
       setIsModalOpen(false);
       setCurrentTask(null);
+    } else {
+      setModalError("请填写任务名称并选择源目录和目标目录。");
     }
   };
 
@@ -141,10 +171,17 @@ function App() {
       {isModalOpen && (
         <TaskModal
           currentTask={currentTask}
-          onClose={() => setIsModalOpen(false)}
+          error={modalError}
+          onClose={() => {
+            setIsModalOpen(false);
+            setModalError(null);
+          }}
           onSave={handleSaveTask}
           onSelectDir={selectDir}
-          onChange={(updates) => setCurrentTask(prev => ({ ...prev, ...updates }))}
+          onChange={(updates) => {
+            setModalError(null);
+            setCurrentTask(prev => ({ ...prev, ...updates }));
+          }}
         />
       )}
 
