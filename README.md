@@ -1,2 +1,96 @@
-# WizSync
-Sync your folders effortlessly
+# WizSync (智同步)
+
+WizSync 是一款基于 **Electron** 和 **Unison** 构建的专业级目录同步工具。它旨在为开发者和专业用户提供一个极其稳定、实时且可视化的本地/跨磁盘目录同步解决方案。
+
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Electron](https://img.shields.io/badge/Electron-29.1.6-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
+---
+
+## ✨ 核心特性
+
+- 🔄 **双向同步能力**：基于成熟的 Unison 算法，能够智能识别双向修改，安全处理文件冲突。
+- ⚡ **实时监控**：利用 Chokidar 毫秒级捕获文件变动，实现“修改即同步”的无感体验。
+- 📦 **开箱即用**：内置针对 macOS (Apple Silicon/Intel) 优化的 Unison 二进制文件，无需用户手动安装依赖。
+- 📊 **可视化仪表盘**：
+  - 实时查看同步状态与进度。
+  - 详尽的统计信息（文件总数、目录大小）。
+  - 图形化的文件差异对比 (Diff)。
+- 📝 **深度日志系统**：
+  - 按任务、按日期自动分割日志。
+  - 支持日志自动轮转（防止文件过大）。
+  - 一键跳转日志文件夹。
+-  Tray **菜单栏控制**：通过托盘图标快速监控正在运行的任务，无需打开主窗口。
+- 🛡️ **冲突保护**：内置路径重复与嵌套检查，防止因配置错误导致的同步回环或文件损坏。
+
+---
+
+## 🚀 快速上手
+
+### 开发环境
+1. **克隆项目**
+   ```bash
+   git clone https://github.com/your-repo/WizSync.git
+   cd WizSync
+   ```
+
+2. **安装依赖**
+   ```bash
+   pnpm install
+   ```
+
+3. **启动开发模式**
+   ```bash
+   pnpm dev
+   ```
+
+### 构建打包
+```bash
+pnpm build
+```
+打包后的应用将生成在 `dist` 目录下。
+
+---
+
+## 🛠 技术架构
+
+- **前端**: React 18 + TypeScript + TailwindCSS
+- **主进程**: Electron 29 + Node.js
+- **同步引擎**: Unison (File Synchronizer)
+- **文件监听**: Chokidar
+- **存储**: electron-store
+- **图标库**: Lucide React
+
+关于架构的深度解析，请参阅 [DEVELOP.md](./DEVELOP.md)。
+
+---
+
+## 📖 使用指南
+
+1. **创建任务**：点击“新建任务”，设置源目录（Source）和目标目录（Target）。
+2. **选择模式**：
+   - **实时监控**：推荐模式，系统会自动监听文件变化并同步。
+   - **定时检查**：按设定的分钟间隔定期执行。
+   - **手动执行**：仅在点击同步按钮时运行。
+3. **查看差异**：在同步前，点击“对比”按钮可以预览两个目录间的文件差异。
+4. **管理日志**：点击任务卡片上的日志图标，可以查看详细的同步历史和错误排查信息。
+
+---
+
+## 🤝 贡献建议
+
+我们非常欢迎 Issue 和 Pull Request！在提交代码前，请确保：
+1. 代码注释保持中文化。
+2. 遵循现有的模块化设计（如日志逻辑位于 `libs/logs.ts`，同步逻辑位于 `libs/sync-manager.ts`）。
+3. 确保 `npm run build` 能够通过 TypeScript 类型检查。
+
+---
+
+## 📄 开源协议
+
+本项目采用 [MIT License](./LICENSE) 开源。
+
+---
+
+**WizSync** - 让数据同步更简单、更安全。
