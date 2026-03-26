@@ -26,10 +26,10 @@ function App() {
     };
     fetchTasks();
 
-    // 监听同步状态更新
-    window.electronAPI.onSyncStatus(({ id, status, lastSyncTime, sourceStats, targetStats }) => {
+    // 监听同步状态更新 (包含磁盘空间、统计信息等)
+    window.electronAPI.onSyncStatus((data) => {
       setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, status, lastSyncTime, sourceStats, targetStats } : t)),
+        prev.map((t) => (t.id === data.id ? { ...t, ...data } : t)),
       );
     });
   }, []);

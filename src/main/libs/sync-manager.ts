@@ -4,12 +4,14 @@ import { BrowserWindow } from "electron";
 import fs from "node:fs";
 import { SyncTask } from "./types";
 import { syncStore } from "./sync-store";
-import { getDirStats, getDiskSpace } from "./fs-utils";
+import { getDirStats } from "./fs-utils";
+import { diskManager } from "./disk";
 import { getUnisonPath } from "../main";
 import { logManager } from "./logs";
 
 /**
  * 同步管理器类 (SyncManager)
+ * 核心：调度 Unison 进程 + 文件监听 + 异常处理
  */
 export class SyncManager {
   private activeProcesses: Map<string, ChildProcess> = new Map();
@@ -19,13 +21,16 @@ export class SyncManager {
   private win: BrowserWindow | null = null;
   private onStatusChange: (() => void) | null = null;
 
-  // 冷却标记：防止同步引起的变更立即触发下一次同步
   private isCoolingDown: Map<string, boolean> = new Map();
-  // 待处理标记：确保在同步或冷却期间发生的变更最终能被执行
   private hasPendingSync: Map<string, boolean> = new Map();
 
+  /**
+   * 设置主窗口引用并初始化相关组件
+   */
   setWindow(win: BrowserWindow) {
     this.win = win;
+    // 窗口就绪后初始化磁盘监控
+    diskManager.init(win, () => this.onStatusChange?.());
   }
 
   setStatusChangeCallback(cb: () => void) {
@@ -66,7 +71,7 @@ export class SyncManager {
   }
 
   /**
-   * 停止任务
+   * 停止并清理任务
    */
   stopTask(id: string) {
     this.activeProcesses.get(id)?.kill();
@@ -91,11 +96,10 @@ export class SyncManager {
   }
 
   /**
-   * 实时同步核心逻辑：解决文件漏同步的关键
+   * 配置实时监听
    */
   private setupRealtime(task: SyncTask) {
     const watcher = chokidar.watch([task.sourcePath, task.targetPath], {
-      // 优化忽略规则：不再忽略所有点文件，仅忽略系统垃圾
       ignored: [
         "**/.DS_Store",
         "**/node_modules/**",
@@ -106,21 +110,18 @@ export class SyncManager {
       ],
       persistent: true,
       ignoreInitial: true,
-      // 增加稳定性阈值：确保大文件（如视频、压缩包）完全复制完成后再同步
       awaitWriteFinish: { 
-        stabilityThreshold: 2000, // 2秒无变化才认为文件写完
+        stabilityThreshold: 2000,
         pollInterval: 200 
       },
     });
 
     watcher.on("all", (event, path) => {
-      // 关键改进：冷却期内发生的变更不再丢弃，而是转为 pending 状态
       if (this.isCoolingDown.get(task.id) || this.activeProcesses.has(task.id)) {
         this.hasPendingSync.set(task.id, true);
         return;
       }
 
-      // 防抖逻辑：合并短时间内的多次写入
       if (this.debounceTimers.has(task.id)) {
         clearTimeout(this.debounceTimers.get(task.id)!);
       }
@@ -131,7 +132,7 @@ export class SyncManager {
           return;
         }
         this.runUnison(task);
-      }, 1500); // 缩短响应时间
+      }, 1500);
 
       this.debounceTimers.set(task.id, timer);
     });
@@ -167,7 +168,7 @@ export class SyncManager {
   }
 
   /**
-   * 执行 Unison 同步：增加健壮性
+   * 执行 Unison 同步
    */
   private async runUnison(task: SyncTask) {
     if (this.activeProcesses.has(task.id)) return;
@@ -190,7 +191,6 @@ export class SyncManager {
       "-fat",
       "-dontchmod",
       "-perms", "0",
-      // 改用更稳健的开关设置方式，防止被误认为根目录
       "-owner=false",
       "-group=false",
       "-xferbycopying",
@@ -203,12 +203,9 @@ export class SyncManager {
     ];
 
     if (task.useParallel) args.push("-maxthreads", "10");
-    
-    // 位置参数：直接传入两个路径，不再使用 -root 前缀以兼容更多版本
     args.push(task.sourcePath);
     args.push(task.targetPath);
 
-    // 单向同步强制覆盖
     if (task.direction === "sourceToTarget") args.push("-force", task.sourcePath);
     else if (task.direction === "targetToSource") args.push("-force", task.targetPath);
 
@@ -230,18 +227,18 @@ export class SyncManager {
         outputBuffer = "";
       }
     };
-proc.stdout.on("data", (data) => {
-  outputBuffer += data.toString();
-  if (outputBuffer.length > 2000) flushBuffer();
-});
 
-proc.stderr.on("data", (data) => {
-  const errorMsg = data.toString();
-  logManager.write(task.id, `[stderr] ${errorMsg}`);
-  this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${errorMsg}` });
-});
+    proc.stdout.on("data", (data) => {
+      outputBuffer += data.toString();
+      if (outputBuffer.length > 2000) flushBuffer();
+    });
 
-// 进程结束逻辑
+    proc.stderr.on("data", (data) => {
+      const errorMsg = data.toString();
+      logManager.write(task.id, `[stderr] ${errorMsg}`);
+      this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${errorMsg}` });
+    });
+
     proc.on("close", async (code) => {
       flushBuffer();
       this.activeProcesses.delete(task.id);
@@ -254,8 +251,8 @@ proc.stderr.on("data", (data) => {
           getDirStats(task.sourcePath),
           getDirStats(task.targetPath)
         ]).then(([sourceStats, targetStats]) => {
-          const sourceDisk = getDiskSpace(task.sourcePath) || undefined;
-          const targetDisk = getDiskSpace(task.targetPath) || undefined;
+          const sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
+          const targetDisk = diskManager.getDiskSpace(task.targetPath) || undefined;
 
           syncStore.updateTask(task.id, { 
             status, 
@@ -280,11 +277,9 @@ proc.stderr.on("data", (data) => {
 
       logManager.write(task.id, `同步结束 (代码: ${code})`);
 
-      // 关键改进：冷却期改为 2 秒，且冷却期间的变更会触发 chain-sync
       this.isCoolingDown.set(task.id, true);
       setTimeout(() => {
         this.isCoolingDown.set(task.id, false);
-        // 检查冷却期或同步期间是否有积压的变更
         if (this.hasPendingSync.get(task.id)) {
           const tasks = syncStore.getTasks();
           const currentTask = tasks.find(t => t.id === task.id);
