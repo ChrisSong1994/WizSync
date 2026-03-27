@@ -100,9 +100,7 @@ export class TrayManager {
         });
       });
 
-      const taskMenu = Menu.buildFromTemplate(menuTemplate);
-
-      const contextMenu = Menu.buildFromTemplate([
+      const fullMenu = Menu.buildFromTemplate([
         {
           label: "仪表盘",
           click: () => {
@@ -115,6 +113,8 @@ export class TrayManager {
           },
         },
         { type: "separator" },
+        ...menuTemplate,
+        { type: "separator" },
         {
           label: "退出程序",
           click: () => {
@@ -125,10 +125,10 @@ export class TrayManager {
 
       if (process.platform === "darwin") {
         this.tray?.on("click", () => {
-          this.tray?.popUpContextMenu(taskMenu);
+          this.tray?.popUpContextMenu(fullMenu);
         });
         this.tray?.on("right-click", () => {
-          this.tray?.popUpContextMenu(contextMenu);
+          this.tray?.popUpContextMenu(fullMenu);
         });
 
         // 更新标题显示数量
@@ -138,11 +138,6 @@ export class TrayManager {
           this.tray?.setTitle("");
         }
       } else {
-        const fullMenu = Menu.buildFromTemplate([
-          ...menuTemplate,
-          { type: "separator" },
-          ...contextMenu.items.map((i) => i as any),
-        ]);
         this.tray?.setContextMenu(fullMenu);
       }
     };
