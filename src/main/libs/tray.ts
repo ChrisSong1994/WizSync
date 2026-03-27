@@ -29,8 +29,8 @@ export class TrayManager {
     // 根据环境选择图标路径：开发环境下使用 public/assets，生产环境下使用打包后的 dist/assets
     const isDev = !app.isPackaged;
     const iconPath = isDev 
-      ? path.join(this.appRoot, "public/assets/icon-16.png")
-      : path.join(this.appRoot, "dist/assets/icon-16.png");
+      ? path.join(this.appRoot, "public/assets/tray-icon.png")
+      : path.join(this.appRoot, "dist/assets/tray-icon.png");
 
     const icon = nativeImage.createFromPath(iconPath);
     

@@ -125,6 +125,8 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  const tasks = syncStore.getTasks();
+  tasks.forEach((task) => syncManager.stopTask(task.id));
 });
 
 app.whenReady().then(() => {
