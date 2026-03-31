@@ -7,7 +7,7 @@ interface TaskListProps {
   tasks: SyncTask[];
   onToggleSync: (task: SyncTask) => void;
   onEditTask: (task: SyncTask) => void;
-  onDeleteTask: (id: string) => void;
+  onDeleteTask: (id: string) => Promise<void>;
   onShowLogs: (id: string) => void;
   onCompare: (id: string) => void;
   onShowBackup: (id: string) => void;
