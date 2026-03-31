@@ -163,7 +163,7 @@ app.whenReady().then(() => {
 ipcMain.handle("get-tasks", () => syncStore.getTasks());
 
 ipcMain.handle("show-confirm", async (_event, message: string) => {
-  const result = await dialog.showMessageBox({
+  const result = await dialog.showMessageBox(win!, {
     type: "question",
     buttons: ["取消", "确定"],
     defaultId: 1,
