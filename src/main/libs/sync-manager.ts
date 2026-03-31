@@ -134,10 +134,8 @@ export class SyncManager {
   private setupRealtime(task: SyncTask) {
     const watcher = chokidar.watch([task.sourcePath, task.targetPath], {
       ignored: [
-        "**/.DS_Store",
+        /(^|[/\\])\../,   // 所有隐藏文件和目录（以 . 开头）
         "**/node_modules/**",
-        "**/.git/**",
-        "**/.unison.**",
         "**/desktop.ini",
         "**/Thumbs.db"
       ],
@@ -229,8 +227,10 @@ export class SyncManager {
       "-xferbycopying",
       "-fastcheck=true",
       "-ui", "text",
-      "-ignore", "Name {.DS_Store,.git,node_modules,Thumbs.db,desktop.ini,.localized}",
-      "-ignore", "Name .unison.*.tmp",
+      "-ignore", "Name .*",
+      "-ignore", "Name node_modules",
+      "-ignore", "Name Thumbs.db",
+      "-ignore", "Name desktop.ini",
       "-label", task.name,
       "-ignorelocks",
     ];

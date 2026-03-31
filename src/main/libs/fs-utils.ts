@@ -5,20 +5,17 @@ import path from "node:path";
  * 定义全局统一的忽略规则
  */
 export const IGNORE_PATTERNS = [
-  ".DS_Store",
-  ".git",
   "node_modules",
   "Thumbs.db",
   "desktop.ini",
-  ".localized",
-  ".unison." // Unison 临时文件
 ];
 
 /**
- * 更鲁棒的忽略检查
+ * 更鲁棒的忽略检查：跳过所有隐藏文件/目录（以 . 开头）及固定黑名单
  */
 function shouldSkip(name: string): boolean {
-  return IGNORE_PATTERNS.some(p => name === p || name.includes(p));
+  if (name.startsWith(".")) return true;
+  return IGNORE_PATTERNS.some(p => name === p);
 }
 
 /**
