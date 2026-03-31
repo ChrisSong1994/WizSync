@@ -15,4 +15,5 @@ export interface SyncTask {
   targetDisk?: { total: number; free: number };
   ignoredPaths?: string[];
   backupPath?: string;
+  pid?: number; // 当前 Unison 进程 ID
 }

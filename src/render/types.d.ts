@@ -15,6 +15,7 @@ export interface SyncTask {
   targetDisk?: { total: number; free: number }
   ignoredPaths?: string[]
   backupPath?: string
+  pid?: number
 }
 
 export interface BackupFile {

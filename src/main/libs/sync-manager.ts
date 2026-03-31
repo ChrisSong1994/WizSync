@@ -113,6 +113,13 @@ export class SyncManager {
     this.activeProcesses.get(id)?.kill();
     this.activeProcesses.delete(id);
 
+    // PID fallback: kill by stored PID in case activeProcesses map was lost (e.g., after restart)
+    const storedTask = syncStore.getTasks().find(t => t.id === id);
+    if (storedTask?.pid) {
+      try { process.kill(storedTask.pid); } catch {}
+      syncStore.updateTask(id, { pid: undefined });
+    }
+
     this.watchers.get(id)?.close();
     this.watchers.delete(id);
 
@@ -270,8 +277,15 @@ export class SyncManager {
     const proc = spawn(unisonPath, args);
     this.activeProcesses.set(task.id, proc);
 
+    // 记录 pid 到任务数据
+    if (proc.pid) {
+      syncStore.updateTask(task.id, { pid: proc.pid });
+      logManager.write(task.id, `[进程] PID: ${proc.pid}`);
+    }
+
     proc.on("error", (err: any) => {
       this.activeProcesses.delete(task.id);
+      syncStore.updateTask(task.id, { pid: undefined });
       logManager.write(task.id, `启动失败: ${err.message}`);
       this.updateStatus(task.id, "error");
     });
@@ -310,6 +324,7 @@ export class SyncManager {
     proc.on("close", async (code) => {
       flushBuffer();
       this.activeProcesses.delete(task.id);
+      syncStore.updateTask(task.id, { pid: undefined });
 
       if (code !== 0 && needsRetry) {
         const msg = "[自动重试] 同步中断，3 秒后重新同步...";
