@@ -46,11 +46,11 @@ export class SyncManager {
   }
 
   /**
-   * 删除任务：停止进程+监听，并清理 Unison 档案文件
+   * 删除任务：停止进程+监听，archive 清理异步后台执行不阻塞
    */
-  async deleteTask(task: SyncTask) {
+  deleteTask(task: SyncTask) {
     this.stopTask(task.id);
-    await this.cleanUnisonArchives(task);
+    this.cleanUnisonArchives(task).catch(() => {});
   }
 
   private cleanUnisonArchives(task: SyncTask): Promise<void> {
@@ -59,11 +59,14 @@ export class SyncManager {
       const proc = spawn(unisonPath, ["-showarchive", task.sourcePath, task.targetPath]);
       let output = "";
 
+      // 5 秒超时，防止进程挂死
+      const timer = setTimeout(() => { proc.kill(); resolve(); }, 5000);
+
       proc.stdout.on("data", (data) => { output += data.toString(); });
       proc.stderr.on("data", (data) => { output += data.toString(); });
 
       proc.on("close", () => {
-        // 解析形如 "Archive file: /path/to/arXXXXXXXX" 的行
+        clearTimeout(timer);
         const matches = [...output.matchAll(/[Aa]rchive\s+file[^:]*:\s*(.+)/g)];
         for (const match of matches) {
           const archivePath = match[1].trim();
@@ -74,7 +77,7 @@ export class SyncManager {
         resolve();
       });
 
-      proc.on("error", () => resolve());
+      proc.on("error", () => { clearTimeout(timer); resolve(); });
     });
   }
 
