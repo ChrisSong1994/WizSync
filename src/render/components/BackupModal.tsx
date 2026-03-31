@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { X, Archive, FolderOpen, FileIcon, RefreshCw, MapPin } from "lucide-react";
+import { X, Archive, FolderOpen, FileIcon, RefreshCw, MapPin, Trash2 } from "lucide-react";
 import { SyncTask, BackupFile } from "../types";
 import { cn, formatSize } from "../utils";
 
@@ -37,6 +37,16 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   const handleOpenFolder = () => {
     window.electronAPI.openBackupFolder(taskId);
+  };
+
+  const handleDeleteFile = async (file: BackupFile) => {
+    if (!confirm(`确定要删除此备份文件吗？\n${file.name}`)) return;
+    const success = await window.electronAPI.deleteBackupFile(file.path);
+    if (success) {
+      setBackupFiles((prev) => prev.filter((f) => f.path !== file.path));
+    } else {
+      alert(`删除失败，请检查文件是否存在：\n${file.path}`);
+    }
   };
 
   return (
@@ -95,7 +105,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             </div>
           ) : (
             <div className="grid gap-2">
-              <div className="grid grid-cols-[1fr,120px,180px,40px] px-4 py-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-50 mb-2">
+              <div className="grid grid-cols-[1fr,120px,180px,72px] px-4 py-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-50 mb-2">
                 <span>文件名</span>
                 <span>大小</span>
                 <span>备份时间</span>
@@ -104,7 +114,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               {backupFiles.map((file, index) => (
                 <div
                   key={index}
-                  className="grid grid-cols-[1fr,120px,180px,40px] items-center px-4 py-3 hover:bg-slate-50 rounded-xl transition-colors group"
+                  className="grid grid-cols-[1fr,120px,180px,72px] items-center px-4 py-3 hover:bg-slate-50 rounded-xl transition-colors group"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <FileIcon size={18} className="text-slate-400 flex-shrink-0" />
@@ -118,13 +128,20 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   <div className="text-[12px] text-slate-400">
                     {new Date(file.mtime).toLocaleString()}
                   </div>
-                  <div className="flex justify-end">
+                  <div className="flex justify-end items-center gap-1">
                     <button
                       onClick={() => window.electronAPI.revealBackupFile(file.path)}
                       className="p-1.5 opacity-0 group-hover:opacity-100 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600 transition-all"
                       title="在访达/资源管理器中定位"
                     >
                       <MapPin size={14} />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteFile(file)}
+                      className="p-1.5 opacity-0 group-hover:opacity-100 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600 transition-all"
+                      title="删除此备份文件"
+                    >
+                      <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
@@ -135,7 +152,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100">
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            提示：备份文件通常带有时间戳后缀（由 Unison 自动管理）。如需恢复，请手动从备份目录复制回原位。
+            提示：备份文件带有时间戳后缀（由 Unison 自动管理），保留 <span className="font-bold text-slate-500">30 天</span>后自动清理。如需恢复，请手动从备份目录复制回原位。
           </p>
         </div>
       </div>

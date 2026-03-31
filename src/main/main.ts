@@ -136,6 +136,21 @@ app.whenReady().then(() => {
   // 应用启动后自动执行所有非手动任务
   setTimeout(() => {
     const tasks = syncStore.getTasks();
+
+    // 清理 30 天前的备份文件
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    tasks.forEach((task) => {
+      if (!task.backupPath || !fs.existsSync(task.backupPath)) return;
+      try {
+        fs.readdirSync(task.backupPath).forEach((file) => {
+          const fullPath = path.join(task.backupPath!, file);
+          const mtime = fs.statSync(fullPath).mtimeMs;
+          if (now - mtime > THIRTY_DAYS) fs.unlinkSync(fullPath);
+        });
+      } catch {}
+    });
+
     tasks.forEach((task) => {
       if (task.mode === "realtime" || task.mode === "scheduled") {
         syncManager.startTask(task);
@@ -308,19 +323,30 @@ ipcMain.handle("list-backup-files", async (_event, id: string) => {
   const task = tasks.find((t) => t.id === id);
   if (!task?.backupPath || !fs.existsSync(task.backupPath)) return [];
 
+  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
   const files = fs.readdirSync(task.backupPath);
   return files
     .map((file) => {
       const fullPath = path.join(task.backupPath!, file);
       const stats = fs.statSync(fullPath);
-      return {
-        name: file,
-        path: fullPath,
-        size: stats.size,
-        mtime: stats.mtimeMs,
-      };
+      return { stats, name: file, path: fullPath, size: stats.size, mtime: stats.mtimeMs };
     })
+    .filter((f) => f.stats.isFile() && now - f.mtime < THIRTY_DAYS)
+    .map(({ stats: _s, ...rest }) => rest)
     .sort((a, b) => b.mtime - a.mtime);
+});
+
+ipcMain.handle("delete-backup-file", (_event, filePath: string) => {
+  try {
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) return false;
+    fs.unlinkSync(filePath);
+    return true;
+  } catch (err) {
+    console.error("[delete-backup-file] 删除失败:", filePath, err);
+    return false;
+  }
 });
 
 ipcMain.handle(

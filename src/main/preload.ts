@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listBackupFiles: (taskId: string) => ipcRenderer.invoke('list-backup-files', taskId),
   openBackupFolder: (taskId: string) => ipcRenderer.invoke('open-backup-folder', taskId),
   revealBackupFile: (filePath: string) => ipcRenderer.invoke('reveal-backup-file', filePath),
+  deleteBackupFile: (filePath: string) => ipcRenderer.invoke('delete-backup-file', filePath),
   syncSingleFile: (taskId: string, filePath: string, direction: string) => 
     ipcRenderer.invoke('sync-single-file', taskId, filePath, direction),
   deleteFile: (taskId: string, filePath: string, side: string) =>

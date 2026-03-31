@@ -47,6 +47,7 @@ export interface ElectronAPI {
   listBackupFiles: (taskId: string) => Promise<BackupFile[]>
   openBackupFolder: (taskId: string) => Promise<boolean>
   revealBackupFile: (filePath: string) => Promise<boolean>
+  deleteBackupFile: (filePath: string) => Promise<boolean>
   syncSingleFile: (taskId: string, filePath: string, direction: 'sourceToTarget' | 'targetToSource') => Promise<boolean>
   deleteFile: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
   ignorePath: (taskId: string, filePath: string) => Promise<boolean>
