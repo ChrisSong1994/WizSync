@@ -8,8 +8,6 @@ import {
   ArrowRight,
   ArrowUpRight,
   ArrowDownLeft,
-  ShieldAlert,
-  ChevronLeft,
   ChevronDown,
   ChevronRight,
   MapPin,
