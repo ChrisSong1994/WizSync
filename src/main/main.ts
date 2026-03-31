@@ -147,7 +147,14 @@ app.whenReady().then(() => {
 // IPC 处理器绑定
 ipcMain.handle("get-tasks", () => syncStore.getTasks());
 
+ipcMain.handle("get-default-backup-path", (_event, taskId: string) => {
+  return path.join(app.getPath("userData"), "backups", taskId);
+});
+
 ipcMain.handle("save-task", async (_event, task: SyncTask) => {
+  if (!task.backupPath) {
+    task.backupPath = path.join(app.getPath("userData"), "backups", task.id);
+  }
   task.sourceStats = await getDirStats(task.sourcePath);
   task.targetStats = await getDirStats(task.targetPath);
   task.sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
@@ -269,6 +276,37 @@ ipcMain.handle("open-log-folder", (_event, id: string) => {
   const dir = logManager.getTaskDir(id);
   shell.openPath(dir);
   return true;
+});
+
+ipcMain.handle("open-backup-folder", (_event, id: string) => {
+  const tasks = syncStore.getTasks();
+  const task = tasks.find((t) => t.id === id);
+  const backupPath = task?.backupPath || path.join(app.getPath("userData"), "backups", id);
+  if (!fs.existsSync(backupPath)) {
+    fs.mkdirSync(backupPath, { recursive: true });
+  }
+  shell.openPath(backupPath);
+  return true;
+});
+
+ipcMain.handle("list-backup-files", async (_event, id: string) => {
+  const tasks = syncStore.getTasks();
+  const task = tasks.find((t) => t.id === id);
+  if (!task?.backupPath || !fs.existsSync(task.backupPath)) return [];
+
+  const files = fs.readdirSync(task.backupPath);
+  return files
+    .map((file) => {
+      const fullPath = path.join(task.backupPath!, file);
+      const stats = fs.statSync(fullPath);
+      return {
+        name: file,
+        path: fullPath,
+        size: stats.size,
+        mtime: stats.mtimeMs,
+      };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
 });
 
 ipcMain.handle(

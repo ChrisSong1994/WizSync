@@ -5,6 +5,7 @@ import { TaskList } from "./components/TaskList";
 import { TaskModal } from "./components/TaskModal";
 import { LogModal } from "./components/LogModal";
 import { DiffModal } from "./components/DiffModal";
+import { BackupModal } from "./components/BackupModal";
 
 /**
  * 应用主组件，管理所有同步任务的状态和交互
@@ -15,6 +16,7 @@ function App() {
   const [currentTask, setCurrentTask] = useState<Partial<SyncTask> | null>(null); // 当前正在操作的任务
   const [modalError, setModalError] = useState<string | null>(null); // 弹窗中的错误提示
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null); // 当前选中的日志任务 ID
+  const [backupTaskId, setBackupTaskId] = useState<string | null>(null); // 当前选中的备份任务 ID
   const [diffData, setDiffData] = useState<DiffResult | null>(null); // 文件差异结果
   const [comparingTaskId, setComparingTaskId] = useState<string | null>(null); // 正在执行对比的任务 ID
 
@@ -37,10 +39,12 @@ function App() {
   /**
    * 初始化新增任务
    */
-  const handleAddTask = () => {
+  const handleAddTask = async () => {
     setModalError(null);
+    const id = Math.random().toString(36).substr(2, 9);
+    const defaultBackupPath = await window.electronAPI.getDefaultBackupPath(id);
     setCurrentTask({
-      id: Math.random().toString(36).substr(2, 9),
+      id,
       name: "",
       sourcePath: "",
       targetPath: "",
@@ -48,6 +52,7 @@ function App() {
       interval: 5,
       direction: "bidirectional",
       status: "idle",
+      backupPath: defaultBackupPath,
     });
     setIsModalOpen(true);
   };
@@ -55,8 +60,11 @@ function App() {
   /**
    * 编辑现有任务
    */
-  const handleEditTask = (task: SyncTask) => {
+  const handleEditTask = async (task: SyncTask) => {
     setModalError(null);
+    if (!task.backupPath) {
+      task.backupPath = await window.electronAPI.getDefaultBackupPath(task.id);
+    }
     setCurrentTask(task);
     setIsModalOpen(true);
   };
@@ -124,7 +132,7 @@ function App() {
   /**
    * 调用系统对话框选择目录
    */
-  const selectDir = async (field: "sourcePath" | "targetPath") => {
+  const selectDir = async (field: "sourcePath" | "targetPath" | "backupPath") => {
     const path = await window.electronAPI.selectDirectory();
     if (path) {
       setCurrentTask((prev) => ({ ...prev, [field]: path }));
@@ -157,6 +165,7 @@ function App() {
         onDeleteTask={handleDeleteTask}
         onShowLogs={setSelectedTaskId}
         onCompare={handleCompare}
+        onShowBackup={setBackupTaskId}
       />
 
       {isModalOpen && (
@@ -190,6 +199,14 @@ function App() {
           tasks={tasks}
           diffData={diffData}
           onClose={() => setComparingTaskId(null)}
+        />
+      )}
+
+      {backupTaskId && (
+        <BackupModal
+          taskId={backupTaskId}
+          tasks={tasks}
+          onClose={() => setBackupTaskId(null)}
         />
       )}
     </div>

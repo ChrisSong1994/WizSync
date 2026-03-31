@@ -14,4 +14,5 @@ export interface SyncTask {
   sourceDisk?: { total: number; free: number };
   targetDisk?: { total: number; free: number };
   ignoredPaths?: string[];
+  backupPath?: string;
 }

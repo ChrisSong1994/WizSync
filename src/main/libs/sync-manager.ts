@@ -202,6 +202,22 @@ export class SyncManager {
       "-ignorelocks",
     ];
 
+    // 添加备份配置
+    if (task.backupPath) {
+      try {
+        if (!fs.existsSync(task.backupPath)) {
+          fs.mkdirSync(task.backupPath, { recursive: true });
+        }
+        args.push("-backup", "Name *");
+        args.push("-backuplocation", "central");
+        args.push("-backupdir", task.backupPath);
+        args.push("-backupcurr", "true");
+        args.push("-backupdel", "true");
+      } catch (err) {
+        console.error("创建备份目录失败:", err);
+      }
+    }
+
     // 添加任务自定义忽略路径
     if (task.ignoredPaths && task.ignoredPaths.length > 0) {
       task.ignoredPaths.forEach(p => {

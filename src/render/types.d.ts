@@ -14,6 +14,14 @@ export interface SyncTask {
   sourceDisk?: { total: number; free: number }
   targetDisk?: { total: number; free: number }
   ignoredPaths?: string[]
+  backupPath?: string
+}
+
+export interface BackupFile {
+  name: string
+  path: string
+  size: number
+  mtime: number
 }
 
 export interface DiffResult {
@@ -35,6 +43,9 @@ export interface ElectronAPI {
   clearPersistentLogs: (id: string) => Promise<boolean>
   openLogFolder: (id: string) => Promise<boolean>
   getIgnorePatterns: () => Promise<string[]>
+  getDefaultBackupPath: (taskId: string) => Promise<string>
+  listBackupFiles: (taskId: string) => Promise<BackupFile[]>
+  openBackupFolder: (taskId: string) => Promise<boolean>
   syncSingleFile: (taskId: string, filePath: string, direction: 'sourceToTarget' | 'targetToSource') => Promise<boolean>
   deleteFile: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
   ignorePath: (taskId: string, filePath: string) => Promise<boolean>

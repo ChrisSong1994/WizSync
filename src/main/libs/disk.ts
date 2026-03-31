@@ -79,7 +79,7 @@ export class DiskManager {
       if (hasAnyChange) {
         this.onStatusChange?.();
       }
-    }, 10000); 
+    }, 10000);  // 每 10 秒刷新一次
   }
 
   /**

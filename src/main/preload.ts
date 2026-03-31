@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearPersistentLogs: (id: string) => ipcRenderer.invoke('clear-persistent-logs', id),
   openLogFolder: (id: string) => ipcRenderer.invoke('open-log-folder', id),
   getIgnorePatterns: () => ipcRenderer.invoke('get-ignore-patterns'),
+  getDefaultBackupPath: (taskId: string) => ipcRenderer.invoke('get-default-backup-path', taskId),
+  listBackupFiles: (taskId: string) => ipcRenderer.invoke('list-backup-files', taskId),
+  openBackupFolder: (taskId: string) => ipcRenderer.invoke('open-backup-folder', taskId),
   syncSingleFile: (taskId: string, filePath: string, direction: string) => 
     ipcRenderer.invoke('sync-single-file', taskId, filePath, direction),
   deleteFile: (taskId: string, filePath: string, side: string) =>

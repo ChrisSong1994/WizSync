@@ -10,6 +10,7 @@ interface TaskListProps {
   onDeleteTask: (id: string) => void;
   onShowLogs: (id: string) => void;
   onCompare: (id: string) => void;
+  onShowBackup: (id: string) => void;
 }
 
 export const TaskList: React.FC<TaskListProps> = ({
@@ -19,6 +20,7 @@ export const TaskList: React.FC<TaskListProps> = ({
   onDeleteTask,
   onShowLogs,
   onCompare,
+  onShowBackup,
 }) => {
   return (
     <main className="flex-1 max-w-5xl mx-auto w-full p-6">
@@ -45,6 +47,7 @@ export const TaskList: React.FC<TaskListProps> = ({
               onDeleteTask={onDeleteTask}
               onShowLogs={onShowLogs}
               onCompare={onCompare}
+              onShowBackup={onShowBackup}
             />
           ))
         )}

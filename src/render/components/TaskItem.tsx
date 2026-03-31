@@ -12,6 +12,7 @@ import {
   Loader2,
   FileSearch,
   MapPin,
+  Archive,
 } from "lucide-react";
 import { SyncTask } from "../types";
 import { cn, formatSize } from "../utils";
@@ -23,6 +24,7 @@ interface TaskItemProps {
   onDeleteTask: (id: string) => void;
   onShowLogs: (id: string) => void;
   onCompare: (id: string) => void;
+  onShowBackup: (id: string) => void;
 }
 
 export const TaskItem: React.FC<TaskItemProps> = ({
@@ -32,6 +34,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onDeleteTask,
   onShowLogs,
   onCompare,
+  onShowBackup,
 }) => {
   const handleReveal = (side: "source" | "target") => {
     window.electronAPI.revealInFileExplorer(task.id, "", side);
@@ -192,6 +195,13 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             title={task.status === "syncing" ? "同步进行中，无法对比" : "对比差异"}
           >
             <FileSearch size={20} />
+          </button>
+          <button
+            onClick={() => onShowBackup(task.id)}
+            className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
+            title="查看备份数据"
+          >
+            <Archive size={20} />
           </button>
           <button
             onClick={() => onToggleSync(task)}
