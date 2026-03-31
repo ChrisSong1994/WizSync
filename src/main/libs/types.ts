@@ -13,4 +13,5 @@ export interface SyncTask {
   targetStats?: { size: number; count: number };
   sourceDisk?: { total: number; free: number };
   targetDisk?: { total: number; free: number };
+  ignoredPaths?: string[];
 }

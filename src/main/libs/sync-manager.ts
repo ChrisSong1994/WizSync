@@ -202,6 +202,13 @@ export class SyncManager {
       "-ignorelocks",
     ];
 
+    // 添加任务自定义忽略路径
+    if (task.ignoredPaths && task.ignoredPaths.length > 0) {
+      task.ignoredPaths.forEach(p => {
+        args.push("-ignore", `Path ${p}`);
+      });
+    }
+
     if (task.useParallel) args.push("-maxthreads", "10");
     args.push(task.sourcePath);
     args.push(task.targetPath);

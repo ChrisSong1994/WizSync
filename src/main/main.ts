@@ -221,14 +221,22 @@ ipcMain.handle(
       if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir, { recursive: true });
       }
+      
+      // 执行文件复制
       fs.copyFileSync(src, dest);
+      
+      // 关键：复制源文件的访问时间和修改时间，确保对比逻辑一致
+      const stats = fs.statSync(src);
+      fs.utimesSync(dest, stats.atime, stats.mtime);
+      
       logManager.write(
         taskId,
-        `[手动同步] 已将文件从 ${direction === "sourceToTarget" ? "源端" : "目标端"} 覆盖到另一端: ${filePath}`,
+        `[手动同步] 已同步并保留时间戳: ${filePath} (${direction === "sourceToTarget" ? "源→目标" : "目标→源"})`,
       );
       return true;
-    } catch (err) {
+    } catch (err: any) {
       console.error("单文件同步失败:", err);
+      logManager.write(taskId, `[错误] 单文件同步失败: ${err.message}`);
       return false;
     }
   },
@@ -263,6 +271,53 @@ ipcMain.handle("open-log-folder", (_event, id: string) => {
   return true;
 });
 
+ipcMain.handle(
+  "delete-file",
+  async (
+    _event,
+    taskId: string,
+    filePath: string,
+    side: "source" | "target",
+  ) => {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+
+    const basePath = side === "source" ? task.sourcePath : task.targetPath;
+    const fullPath = path.join(basePath, filePath);
+
+    try {
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+        logManager.write(taskId, `[手动删除] 已删除${side === "source" ? "源端" : "目标端"}文件: ${filePath}`);
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      console.error("删除文件失败:", err);
+      logManager.write(taskId, `[错误] 删除文件失败: ${err.message}`);
+      return false;
+    }
+  },
+);
+
+ipcMain.handle(
+  "ignore-path",
+  async (_event, taskId: string, filePath: string) => {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+
+    const ignoredPaths = task.ignoredPaths || [];
+    if (!ignoredPaths.includes(filePath)) {
+      ignoredPaths.push(filePath);
+      syncStore.updateTask(taskId, { ignoredPaths });
+      logManager.write(taskId, `[手动忽略] 已将文件添加到任务忽略列表: ${filePath}`);
+    }
+    return true;
+  },
+);
+
 ipcMain.handle("compare-directories", async (event, id: string) => {
   const tasks = syncStore.getTasks();
   const task = tasks.find((t) => t.id === id);
@@ -278,20 +333,31 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
     getAllFiles(task.targetPath, task.targetPath, { count: 0 }, sendProgress),
   ]);
 
+  const ignoredPaths = task.ignoredPaths || [];
+  const isIgnored = (relPath: string) => {
+    return ignoredPaths.some(p => relPath === p || relPath.startsWith(p + path.sep));
+  };
+
   const diff = {
     sourceOnly: [] as any[],
     targetOnly: [] as any[],
     different: [] as any[],
+    ignored: [] as any[],
   };
 
   let processedCount = 0;
   for (const [relPath, sInfo] of sourceFiles) {
+    if (isIgnored(relPath)) {
+      diff.ignored.push({ path: relPath, size: sInfo.size, side: targetFiles.has(relPath) ? 'both' : 'source' });
+      continue;
+    }
+
     const tInfo = targetFiles.get(relPath);
     if (!tInfo) {
       diff.sourceOnly.push({ path: relPath, size: sInfo.size });
     } else if (
       sInfo.size !== tInfo.size ||
-      Math.abs(sInfo.mtime - tInfo.mtime) > 1000
+      Math.abs(sInfo.mtime - tInfo.mtime) > 2000
     ) {
       diff.different.push({
         path: relPath,
@@ -309,9 +375,14 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
   }
 
   for (const [relPath, tInfo] of targetFiles) {
-    if (!sourceFiles.has(relPath)) {
-      diff.targetOnly.push({ path: relPath, size: tInfo.size });
+    if (sourceFiles.has(relPath)) continue;
+    
+    if (isIgnored(relPath)) {
+      diff.ignored.push({ path: relPath, size: tInfo.size, side: 'target' });
+      continue;
     }
+    
+    diff.targetOnly.push({ path: relPath, size: tInfo.size });
   }
 
   return diff;

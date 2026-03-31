@@ -13,12 +13,14 @@ export interface SyncTask {
   targetStats?: { size: number; count: number }
   sourceDisk?: { total: number; free: number }
   targetDisk?: { total: number; free: number }
+  ignoredPaths?: string[]
 }
 
 export interface DiffResult {
   sourceOnly: { path: string; size: number }[]
   targetOnly: { path: string; size: number }[]
   different: { path: string; sourceSize: number; targetSize: number; sourceMtime: number; targetMtime: number }[]
+  ignored: { path: string; size: number; side: 'source' | 'target' | 'both' }[]
 }
 
 export interface ElectronAPI {
@@ -34,6 +36,8 @@ export interface ElectronAPI {
   openLogFolder: (id: string) => Promise<boolean>
   getIgnorePatterns: () => Promise<string[]>
   syncSingleFile: (taskId: string, filePath: string, direction: 'sourceToTarget' | 'targetToSource') => Promise<boolean>
+  deleteFile: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
+  ignorePath: (taskId: string, filePath: string) => Promise<boolean>
   revealInFileExplorer: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
   onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; sourceStats?: any; targetStats?: any }) => void) => void
   onSyncLog: (callback: (data: { id: string; log: string }) => void) => void
