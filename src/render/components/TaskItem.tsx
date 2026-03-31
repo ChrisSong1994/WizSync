@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Play,
   StopCircle,
@@ -21,7 +21,7 @@ interface TaskItemProps {
   task: SyncTask;
   onToggleSync: (task: SyncTask) => void;
   onEditTask: (task: SyncTask) => void;
-  onDeleteTask: (id: string) => void;
+  onDeleteTask: (id: string) => Promise<void>;
   onShowLogs: (id: string) => void;
   onCompare: (id: string) => void;
   onShowBackup: (id: string) => void;
@@ -36,8 +36,16 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onCompare,
   onShowBackup,
 }) => {
+  const [deleting, setDeleting] = useState(false);
+
   const handleReveal = (side: "source" | "target") => {
     window.electronAPI.revealInFileExplorer(task.id, "", side);
+  };
+
+  const handleDeleteClick = async () => {
+    if (!await window.electronAPI.showConfirm(`确定要删除任务「${task.name}」吗？\n此操作将停止同步并清理相关进程。`)) return;
+    setDeleting(true);
+    await onDeleteTask(task.id);
   };
 
   return (
@@ -227,11 +235,17 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             <Edit3 size={20} />
           </button>
           <button
-            onClick={() => onDeleteTask(task.id)}
-            className="w-11 h-11 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
+            onClick={handleDeleteClick}
+            disabled={deleting}
+            className={cn(
+              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
+              deleting
+                ? "bg-red-100 text-red-400 cursor-not-allowed"
+                : "bg-red-50 text-red-600 hover:bg-red-100"
+            )}
             title="删除任务"
           >
-            <Trash2 size={20} />
+            {deleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={20} />}
           </button>
         </div>
       </div>

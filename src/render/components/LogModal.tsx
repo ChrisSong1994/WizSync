@@ -49,7 +49,7 @@ export const LogModal: React.FC<LogModalProps> = ({
   }, [persistentLogs, sessionLogs]);
 
   const handleClearLogs = async () => {
-    if (confirm("确定要清空该任务的所有持久化日志吗？")) {
+    if (await window.electronAPI.showConfirm("确定要清空该任务的所有持久化日志吗？")) {
       await window.electronAPI.clearPersistentLogs(taskId);
       setPersistentLogs("");
       setSessionLogs([]);

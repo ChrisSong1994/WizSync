@@ -40,7 +40,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   const handleDeleteFile = async (file: BackupFile) => {
-    if (!confirm(`确定要删除此备份文件吗？\n${file.name}`)) return;
+    if (!await window.electronAPI.showConfirm(`确定要删除此备份文件吗？\n${file.name}`)) return;
     const success = await window.electronAPI.deleteBackupFile(file.path);
     if (success) {
       setBackupFiles((prev) => prev.filter((f) => f.path !== file.path));

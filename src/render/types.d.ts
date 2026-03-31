@@ -33,6 +33,7 @@ export interface DiffResult {
 
 export interface ElectronAPI {
   getTasks: () => Promise<SyncTask[]>
+  showConfirm: (message: string) => Promise<boolean>
   saveTask: (task: SyncTask) => Promise<SyncTask[]>
   deleteTask: (id: string) => Promise<SyncTask[]>
   startSync: (id: string) => Promise<boolean>

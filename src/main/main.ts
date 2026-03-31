@@ -162,6 +162,17 @@ app.whenReady().then(() => {
 // IPC 处理器绑定
 ipcMain.handle("get-tasks", () => syncStore.getTasks());
 
+ipcMain.handle("show-confirm", async (_event, message: string) => {
+  const result = await dialog.showMessageBox({
+    type: "question",
+    buttons: ["取消", "确定"],
+    defaultId: 1,
+    cancelId: 0,
+    message,
+  });
+  return result.response === 1;
+});
+
 ipcMain.handle("get-default-backup-path", (_event, taskId: string) => {
   return path.join(app.getPath("userData"), "backups", taskId);
 });

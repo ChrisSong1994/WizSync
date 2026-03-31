@@ -83,8 +83,8 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   };
 
   const handleDelete = async (filePath: string, side: 'source' | 'target') => {
-    if (!confirm(`确定要删除${side === 'source' ? '源目录' : '目标目录'}中的文件吗？\n${filePath}`)) return;
-    
+    if (!await window.electronAPI.showConfirm(`确定要删除${side === 'source' ? '源目录' : '目标目录'}中的文件吗？\n${filePath}`)) return;
+
     const success = await window.electronAPI.deleteFile(taskId, filePath, side);
     if (success) {
       setResolvedPaths(prev => new Set(prev).add(filePath));
@@ -92,8 +92,8 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   };
 
   const handleIgnore = async (filePath: string) => {
-    if (!confirm(`确定要忽略此路径吗？忽略后在后续对比中将不再显示。\n${filePath}`)) return;
-    
+    if (!await window.electronAPI.showConfirm(`确定要忽略此路径吗？忽略后在后续对比中将不再显示。\n${filePath}`)) return;
+
     const success = await window.electronAPI.ignorePath(taskId, filePath);
     if (success) {
       setResolvedPaths(prev => new Set(prev).add(filePath));
@@ -116,10 +116,24 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     direction: 'sourceToTarget' | 'targetToSource',
     sectionKey: string,
   ) => {
-    if (!confirm(`确定要同步全部 ${files.length} 个文件吗？`)) return;
+    if (!await window.electronAPI.showConfirm(`确定要同步全部 ${files.length} 个文件吗？`)) return;
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
     for (const file of files) {
       const success = await window.electronAPI.syncSingleFile(taskId, file.path, direction);
+      if (success) setResolvedPaths(prev => new Set(prev).add(file.path));
+    }
+    setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
+  };
+
+  const handleDeleteAll = async (
+    files: { path: string }[],
+    side: 'source' | 'target',
+    sectionKey: string,
+  ) => {
+    if (!await window.electronAPI.showConfirm(`确定要删除全部 ${files.length} 个文件吗？此操作不可撤销。`)) return;
+    setBatchSyncing(prev => new Set(prev).add(sectionKey));
+    for (const file of files) {
+      const success = await window.electronAPI.deleteFile(taskId, file.path, side);
       if (success) setResolvedPaths(prev => new Set(prev).add(file.path));
     }
     setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
@@ -204,19 +218,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                             {collapsedSections.has('different') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
                           </span>
                         </button>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleSyncAll(activeDifferent, 'sourceToTarget', 'differentSource')}
-                            disabled={batchSyncing.has('differentSource') || batchSyncing.has('differentTarget')}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
-                          >
-                            {batchSyncing.has('differentSource') ? (
-                              <Loader2 size={12} className="animate-spin" />
-                            ) : (
-                              <ChevronsRight size={12} />
-                            )}
-                            全部使用源端版本
-                          </button>
+                        <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleSyncAll(activeDifferent, 'targetToSource', 'differentTarget')}
                             disabled={batchSyncing.has('differentSource') || batchSyncing.has('differentTarget')}
@@ -228,6 +230,18 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                               <ChevronsRight size={12} className="rotate-180" />
                             )}
                             全部使用目标端版本
+                          </button>
+                          <button
+                            onClick={() => handleSyncAll(activeDifferent, 'sourceToTarget', 'differentSource')}
+                            disabled={batchSyncing.has('differentSource') || batchSyncing.has('differentTarget')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('differentSource') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <ChevronsRight size={12} />
+                            )}
+                            全部使用源端版本
                           </button>
                         </div>
                       </div>
@@ -303,18 +317,32 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                             {collapsedSections.has('sourceOnly') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
                           </span>
                         </button>
-                        <button
-                          onClick={() => handleSyncAll(activeSourceOnly, 'sourceToTarget', 'sourceOnly')}
-                          disabled={batchSyncing.has('sourceOnly')}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
-                        >
-                          {batchSyncing.has('sourceOnly') ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <ChevronsRight size={12} />
-                          )}
-                          全部同步到目标端
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleSyncAll(activeSourceOnly, 'sourceToTarget', 'sourceOnly')}
+                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('sourceOnly') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <ChevronsRight size={12} />
+                            )}
+                            全部同步到目标端
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAll(activeSourceOnly, 'source', 'sourceOnlyDelete')}
+                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('sourceOnlyDelete') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={12} />
+                            )}
+                            全部删除
+                          </button>
+                        </div>
                       </div>
                       {!collapsedSections.has('sourceOnly') && (
                         <div className="space-y-2 animate-in slide-in-from-top-1 duration-200">
@@ -378,18 +406,32 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                             {collapsedSections.has('targetOnly') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
                           </span>
                         </button>
-                        <button
-                          onClick={() => handleSyncAll(activeTargetOnly, 'targetToSource', 'targetOnly')}
-                          disabled={batchSyncing.has('targetOnly')}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
-                        >
-                          {batchSyncing.has('targetOnly') ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <ChevronsRight size={12} />
-                          )}
-                          全部同步到源端
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleSyncAll(activeTargetOnly, 'targetToSource', 'targetOnly')}
+                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('targetOnly') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <ChevronsRight size={12} />
+                            )}
+                            全部同步到源端
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAll(activeTargetOnly, 'target', 'targetOnlyDelete')}
+                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('targetOnlyDelete') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={12} />
+                            )}
+                            全部删除
+                          </button>
+                        </div>
                       </div>
                       {!collapsedSections.has('targetOnly') && (
                         <div className="space-y-2 animate-in slide-in-from-top-1 duration-200">

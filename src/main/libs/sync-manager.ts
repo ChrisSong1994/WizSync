@@ -274,6 +274,8 @@ export class SyncManager {
     });
 
     let outputBuffer = "";
+    let needsRetry = false;
+
     const flushBuffer = () => {
       if (outputBuffer) {
         logManager.write(task.id, outputBuffer);
@@ -283,12 +285,21 @@ export class SyncManager {
     };
 
     proc.stdout.on("data", (data) => {
-      outputBuffer += data.toString();
+      const chunk: string = data.toString();
+      outputBuffer += chunk;
+      if (chunk.includes("Destination updated during synchronization") ||
+          chunk.includes("Synchronization incomplete")) {
+        needsRetry = true;
+      }
       if (outputBuffer.length > 2000) flushBuffer();
     });
 
     proc.stderr.on("data", (data) => {
-      const errorMsg = data.toString();
+      const errorMsg: string = data.toString();
+      if (errorMsg.includes("Destination updated during synchronization") ||
+          errorMsg.includes("Synchronization incomplete")) {
+        needsRetry = true;
+      }
       logManager.write(task.id, `[stderr] ${errorMsg}`);
       this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${errorMsg}` });
     });
@@ -296,6 +307,18 @@ export class SyncManager {
     proc.on("close", async (code) => {
       flushBuffer();
       this.activeProcesses.delete(task.id);
+
+      if (code !== 0 && needsRetry) {
+        const msg = "[自动重试] 同步中断，3 秒后重新同步...";
+        logManager.write(task.id, msg);
+        this.win?.webContents.send("sync-log", { id: task.id, log: msg });
+        setTimeout(() => {
+          const tasks = syncStore.getTasks();
+          const currentTask = tasks.find(t => t.id === task.id);
+          if (currentTask) this.runUnison(currentTask);
+        }, 3000);
+        return;
+      }
       
       const status = code === 0 ? "idle" : "error";
       const lastSyncTime = new Date().toLocaleString();
