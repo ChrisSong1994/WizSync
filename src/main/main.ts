@@ -162,8 +162,14 @@ ipcMain.handle("save-task", async (_event, task: SyncTask) => {
   return syncStore.saveTask(task);
 });
 
-ipcMain.handle("delete-task", (_event, id: string) => {
-  syncManager.stopTask(id);
+ipcMain.handle("delete-task", async (_event, id: string) => {
+  const tasks = syncStore.getTasks();
+  const task = tasks.find((t) => t.id === id);
+  if (task) {
+    await syncManager.deleteTask(task);
+  } else {
+    syncManager.stopTask(id);
+  }
   return syncStore.deleteTask(id);
 });
 

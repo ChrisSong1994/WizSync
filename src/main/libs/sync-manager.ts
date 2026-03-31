@@ -46,6 +46,39 @@ export class SyncManager {
   }
 
   /**
+   * 删除任务：停止进程+监听，并清理 Unison 档案文件
+   */
+  async deleteTask(task: SyncTask) {
+    this.stopTask(task.id);
+    await this.cleanUnisonArchives(task);
+  }
+
+  private cleanUnisonArchives(task: SyncTask): Promise<void> {
+    return new Promise((resolve) => {
+      const unisonPath = getUnisonPath();
+      const proc = spawn(unisonPath, ["-showarchive", task.sourcePath, task.targetPath]);
+      let output = "";
+
+      proc.stdout.on("data", (data) => { output += data.toString(); });
+      proc.stderr.on("data", (data) => { output += data.toString(); });
+
+      proc.on("close", () => {
+        // 解析形如 "Archive file: /path/to/arXXXXXXXX" 的行
+        const matches = [...output.matchAll(/[Aa]rchive\s+file[^:]*:\s*(.+)/g)];
+        for (const match of matches) {
+          const archivePath = match[1].trim();
+          try {
+            if (fs.existsSync(archivePath)) fs.unlinkSync(archivePath);
+          } catch {}
+        }
+        resolve();
+      });
+
+      proc.on("error", () => resolve());
+    });
+  }
+
+  /**
    * 启动任务
    */
   startTask(task: SyncTask) {
@@ -211,8 +244,6 @@ export class SyncManager {
         args.push("-backup", "Name *");
         args.push("-backuplocation", "central");
         args.push("-backupdir", task.backupPath);
-        args.push("-backupcurr", "true");
-        args.push("-backupdel", "true");
       } catch (err) {
         console.error("创建备份目录失败:", err);
       }
