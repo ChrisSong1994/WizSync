@@ -278,6 +278,14 @@ ipcMain.handle(
   },
 );
 
+ipcMain.handle("reveal-backup-file", (_event, filePath: string) => {
+  if (fs.existsSync(filePath)) {
+    shell.showItemInFolder(filePath);
+    return true;
+  }
+  return false;
+});
+
 ipcMain.handle("open-log-folder", (_event, id: string) => {
   const dir = logManager.getTaskDir(id);
   shell.openPath(dir);
@@ -358,6 +366,20 @@ ipcMain.handle(
       syncStore.updateTask(taskId, { ignoredPaths });
       logManager.write(taskId, `[手动忽略] 已将文件添加到任务忽略列表: ${filePath}`);
     }
+    return true;
+  },
+);
+
+ipcMain.handle(
+  "unignore-path",
+  async (_event, taskId: string, filePath: string) => {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+
+    const ignoredPaths = (task.ignoredPaths || []).filter((p) => p !== filePath);
+    syncStore.updateTask(taskId, { ignoredPaths });
+    logManager.write(taskId, `[取消忽略] 已将文件从任务忽略列表移除: ${filePath}`);
     return true;
   },
 );

@@ -13,6 +13,8 @@ import {
   MapPin,
   Trash2,
   EyeOff,
+  Eye,
+  ChevronsRight,
 } from "lucide-react";
 import { SyncTask, DiffResult } from "../types";
 import { formatSize, cn } from "../utils";
@@ -35,6 +37,8 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   const [syncingPaths, setSyncingPaths] = useState<Set<string>>(new Set());
   const [resolvedPaths, setResolvedPaths] = useState<Set<string>>(new Set());
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set(['ignored']));
+  const [unignoredPaths, setUnignoredPaths] = useState<Set<string>>(new Set());
+  const [batchSyncing, setBatchSyncing] = useState<Set<string>>(new Set());
   const taskName = tasks.find((t) => t.id === taskId)?.name;
 
   useEffect(() => {
@@ -98,6 +102,27 @@ export const DiffModal: React.FC<DiffModalProps> = ({
 
   const handleReveal = (filePath: string, side: 'source' | 'target') => {
     window.electronAPI.revealInFileExplorer(taskId, filePath, side);
+  };
+
+  const handleUnignore = async (filePath: string) => {
+    const success = await window.electronAPI.unignorePath(taskId, filePath);
+    if (success) {
+      setUnignoredPaths(prev => new Set(prev).add(filePath));
+    }
+  };
+
+  const handleSyncAll = async (
+    files: { path: string }[],
+    direction: 'sourceToTarget' | 'targetToSource',
+    sectionKey: string,
+  ) => {
+    if (!confirm(`确定要同步全部 ${files.length} 个文件吗？`)) return;
+    setBatchSyncing(prev => new Set(prev).add(sectionKey));
+    for (const file of files) {
+      const success = await window.electronAPI.syncSingleFile(taskId, file.path, direction);
+      if (success) setResolvedPaths(prev => new Set(prev).add(file.path));
+    }
+    setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
 
   const MAX_DISPLAY = 1000;
@@ -166,18 +191,46 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                   {/* 内容不一致 */}
                   {activeDifferent.length > 0 && (
                     <section>
-                      <button 
-                        onClick={() => toggleSection('different')}
-                        className="w-full flex items-center justify-between group mb-3"
-                      >
-                        <h3 className="text-sm font-bold text-amber-600 flex items-center gap-2">
-                          <FileCode size={16} />
-                          内容不一致 ({activeDifferent.length})
-                        </h3>
-                        <div className="text-slate-400 group-hover:text-amber-500 transition-colors">
-                          {collapsedSections.has('different') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+                      <div className="flex items-center justify-between mb-3">
+                        <button
+                          onClick={() => toggleSection('different')}
+                          className="flex items-center gap-2 group"
+                        >
+                          <h3 className="text-sm font-bold text-amber-600 flex items-center gap-2">
+                            <FileCode size={16} />
+                            内容不一致 ({activeDifferent.length})
+                          </h3>
+                          <span className="text-slate-400 group-hover:text-amber-500 transition-colors">
+                            {collapsedSections.has('different') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+                          </span>
+                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleSyncAll(activeDifferent, 'sourceToTarget', 'differentSource')}
+                            disabled={batchSyncing.has('differentSource') || batchSyncing.has('differentTarget')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('differentSource') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <ChevronsRight size={12} />
+                            )}
+                            全部使用源端版本
+                          </button>
+                          <button
+                            onClick={() => handleSyncAll(activeDifferent, 'targetToSource', 'differentTarget')}
+                            disabled={batchSyncing.has('differentSource') || batchSyncing.has('differentTarget')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('differentTarget') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <ChevronsRight size={12} className="rotate-180" />
+                            )}
+                            全部使用目标端版本
+                          </button>
                         </div>
-                      </button>
+                      </div>
                       {!collapsedSections.has('different') && (
                         <div className="space-y-2 animate-in slide-in-from-top-1 duration-200">
                           {activeDifferent.slice(0, MAX_DISPLAY).map((file, i) => (
@@ -237,18 +290,32 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                   {/* 仅在源目录 */}
                   {activeSourceOnly.length > 0 && (
                     <section>
-                      <button 
-                        onClick={() => toggleSection('sourceOnly')}
-                        className="w-full flex items-center justify-between group mb-3"
-                      >
-                        <h3 className="text-sm font-bold text-blue-600 flex items-center gap-2">
-                          <ArrowUpRight size={16} />
-                          仅在源目录 ({activeSourceOnly.length})
-                        </h3>
-                        <div className="text-slate-400 group-hover:text-blue-500 transition-colors">
-                          {collapsedSections.has('sourceOnly') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
-                        </div>
-                      </button>
+                      <div className="flex items-center justify-between mb-3">
+                        <button
+                          onClick={() => toggleSection('sourceOnly')}
+                          className="flex items-center gap-2 group"
+                        >
+                          <h3 className="text-sm font-bold text-blue-600 flex items-center gap-2">
+                            <ArrowUpRight size={16} />
+                            仅在源目录 ({activeSourceOnly.length})
+                          </h3>
+                          <span className="text-slate-400 group-hover:text-blue-500 transition-colors">
+                            {collapsedSections.has('sourceOnly') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => handleSyncAll(activeSourceOnly, 'sourceToTarget', 'sourceOnly')}
+                          disabled={batchSyncing.has('sourceOnly')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                        >
+                          {batchSyncing.has('sourceOnly') ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <ChevronsRight size={12} />
+                          )}
+                          全部同步到目标端
+                        </button>
+                      </div>
                       {!collapsedSections.has('sourceOnly') && (
                         <div className="space-y-2 animate-in slide-in-from-top-1 duration-200">
                           {activeSourceOnly.slice(0, MAX_DISPLAY).map((file, i) => (
@@ -298,18 +365,32 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                   {/* 仅在目标目录 */}
                   {activeTargetOnly.length > 0 && (
                     <section>
-                      <button 
-                        onClick={() => toggleSection('targetOnly')}
-                        className="w-full flex items-center justify-between group mb-3"
-                      >
-                        <h3 className="text-sm font-bold text-emerald-600 flex items-center gap-2">
-                          <ArrowDownLeft size={16} />
-                          仅在目标目录 ({activeTargetOnly.length})
-                        </h3>
-                        <div className="text-slate-400 group-hover:text-emerald-500 transition-colors">
-                          {collapsedSections.has('targetOnly') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
-                        </div>
-                      </button>
+                      <div className="flex items-center justify-between mb-3">
+                        <button
+                          onClick={() => toggleSection('targetOnly')}
+                          className="flex items-center gap-2 group"
+                        >
+                          <h3 className="text-sm font-bold text-emerald-600 flex items-center gap-2">
+                            <ArrowDownLeft size={16} />
+                            仅在目标目录 ({activeTargetOnly.length})
+                          </h3>
+                          <span className="text-slate-400 group-hover:text-emerald-500 transition-colors">
+                            {collapsedSections.has('targetOnly') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => handleSyncAll(activeTargetOnly, 'targetToSource', 'targetOnly')}
+                          disabled={batchSyncing.has('targetOnly')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                        >
+                          {batchSyncing.has('targetOnly') ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <ChevronsRight size={12} />
+                          )}
+                          全部同步到源端
+                        </button>
+                      </div>
                       {!collapsedSections.has('targetOnly') && (
                         <div className="space-y-2 animate-in slide-in-from-top-1 duration-200">
                           {activeTargetOnly.slice(0, MAX_DISPLAY).map((file, i) => (
@@ -359,28 +440,76 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                   {/* 忽略的文件 */}
                   {diffData.ignored && diffData.ignored.length > 0 && (
                     <section className="mt-8 pt-8 border-t border-slate-100">
-                      <button 
+                      <button
                         onClick={() => toggleSection('ignored')}
                         className="w-full flex items-center justify-between group mb-3"
                       >
                         <h3 className="text-sm font-bold text-slate-400 flex items-center gap-2">
                           <EyeOff size={16} />
-                          已忽略的文件 ({diffData.ignored.length})
+                          已忽略的文件 ({diffData.ignored.filter(f => !unignoredPaths.has(f.path)).length})
                         </h3>
                         <div className="text-slate-300 group-hover:text-slate-500 transition-colors">
                           {collapsedSections.has('ignored') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
                         </div>
                       </button>
                       {!collapsedSections.has('ignored') && (
-                        <div className="space-y-2 opacity-60">
-                          {diffData.ignored.map((file, i) => (
-                            <div key={i} className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex items-center justify-between group">
-                              <span className="text-sm font-mono text-slate-500 truncate max-w-md">{file.path}</span>
+                        <div className="space-y-2">
+                          {diffData.ignored.filter(f => !unignoredPaths.has(f.path)).map((file, i) => (
+                            <div key={i} className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex items-center justify-between group hover:border-slate-200 transition-colors">
+                              <span className="text-sm font-mono text-slate-500 truncate max-w-md opacity-60">{file.path}</span>
                               <div className="flex items-center gap-3">
-                                <span className="text-[10px] text-slate-400 font-bold uppercase">
+                                <span className="text-[10px] text-slate-400 font-bold uppercase opacity-60">
                                   {file.side === 'both' ? '双端存在' : file.side === 'source' ? '仅源端' : '仅目标端'}
                                 </span>
-                                <span className="text-[11px] font-bold text-slate-400">{formatSize(file.size)}</span>
+                                <span className="text-[11px] font-bold text-slate-400 opacity-60">{formatSize(file.size)}</span>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  {/* 定位按钮 */}
+                                  {(file.side === 'source' || file.side === 'both') && (
+                                    <button
+                                      onClick={() => handleReveal(file.path, 'source')}
+                                      className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600 transition-all"
+                                      title="在源端定位文件"
+                                    >
+                                      <MapPin size={14} />
+                                    </button>
+                                  )}
+                                  {(file.side === 'target' || file.side === 'both') && (
+                                    <button
+                                      onClick={() => handleReveal(file.path, 'target')}
+                                      className="p-1.5 hover:bg-emerald-50 rounded-lg text-slate-400 hover:text-emerald-600 transition-all"
+                                      title="在目标端定位文件"
+                                    >
+                                      <MapPin size={14} />
+                                    </button>
+                                  )}
+                                  {/* 删除按钮 */}
+                                  {(file.side === 'source' || file.side === 'both') && (
+                                    <button
+                                      onClick={() => handleDelete(file.path, 'source')}
+                                      className="p-1.5 bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600 rounded-lg transition-colors"
+                                      title="删除源端文件"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  )}
+                                  {(file.side === 'target' || file.side === 'both') && (
+                                    <button
+                                      onClick={() => handleDelete(file.path, 'target')}
+                                      className="p-1.5 bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600 rounded-lg transition-colors"
+                                      title="删除目标端文件"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  )}
+                                  {/* 取消忽略按钮 */}
+                                  <button
+                                    onClick={() => handleUnignore(file.path)}
+                                    className="p-1.5 bg-amber-50 text-amber-500 hover:bg-amber-100 hover:text-amber-700 rounded-lg transition-colors"
+                                    title="从忽略列表中移除"
+                                  >
+                                    <Eye size={14} />
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           ))}

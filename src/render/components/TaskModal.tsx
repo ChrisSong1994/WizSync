@@ -88,19 +88,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           </div>
 
-          {/* 备份目录 */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-bold text-slate-700 ml-1">
-              备份目录 (用于存放删除/冲突文件)
-            </label>
-            <button
-              onClick={() => onSelectDir("backupPath")}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-left text-sm text-slate-600 hover:border-blue-400 transition-colors truncate"
-            >
-              {currentTask?.backupPath || "选择目录..."}
-            </button>
-          </div>
-
           {/* 同步方向 */}
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-slate-700 ml-1">

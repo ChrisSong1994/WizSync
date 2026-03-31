@@ -15,12 +15,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDefaultBackupPath: (taskId: string) => ipcRenderer.invoke('get-default-backup-path', taskId),
   listBackupFiles: (taskId: string) => ipcRenderer.invoke('list-backup-files', taskId),
   openBackupFolder: (taskId: string) => ipcRenderer.invoke('open-backup-folder', taskId),
+  revealBackupFile: (filePath: string) => ipcRenderer.invoke('reveal-backup-file', filePath),
   syncSingleFile: (taskId: string, filePath: string, direction: string) => 
     ipcRenderer.invoke('sync-single-file', taskId, filePath, direction),
   deleteFile: (taskId: string, filePath: string, side: string) =>
     ipcRenderer.invoke('delete-file', taskId, filePath, side),
   ignorePath: (taskId: string, filePath: string) =>
     ipcRenderer.invoke('ignore-path', taskId, filePath),
+  unignorePath: (taskId: string, filePath: string) =>
+    ipcRenderer.invoke('unignore-path', taskId, filePath),
   revealInFileExplorer: (taskId: string, filePath: string, side: string) =>
     ipcRenderer.invoke('reveal-in-explorer', taskId, filePath, side),
   onSyncStatus: (callback: any) => ipcRenderer.on('sync-status', (_event, value) => callback(value)),
