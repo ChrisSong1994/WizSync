@@ -49,6 +49,17 @@ export class SyncManager {
   }
 
   /**
+   * 立即刷新任务统计信息
+   */
+  public async refreshStats(id: string) {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find(t => t.id === id);
+    if (task) {
+      await this.refreshTaskStats(id, task.status);
+    }
+  }
+
+  /**
    * 设置任务的手动同步状态
    */
   public setManualSyncing(id: string, syncing: boolean) {

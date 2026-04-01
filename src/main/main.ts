@@ -421,6 +421,8 @@ ipcMain.handle(
       if (fs.existsSync(fullPath)) {
         fs.unlinkSync(fullPath);
         logManager.write(taskId, `[手动删除] 已删除${side === "source" ? "源端" : "目标端"}文件: ${filePath}`);
+        // 立即刷新统计信息，确保UI显示最新数据
+        syncManager.refreshStats(taskId);
         return true;
       }
       return false;
@@ -448,6 +450,8 @@ ipcMain.handle(
       ignoredPaths.push(filePath);
       syncStore.updateTask(taskId, { ignoredPaths });
       logManager.write(taskId, `[手动忽略] 已将文件添加到任务忽略列表: ${filePath}`);
+      // 刷新统计信息，因为忽略文件可能影响文件统计
+      syncManager.refreshStats(taskId);
     }
     return true;
   },
@@ -463,6 +467,8 @@ ipcMain.handle(
     const ignoredPaths = (task.ignoredPaths || []).filter((p) => p !== filePath);
     syncStore.updateTask(taskId, { ignoredPaths });
     logManager.write(taskId, `[取消忽略] 已将文件从任务忽略列表移除: ${filePath}`);
+    // 刷新统计信息，因为取消忽略文件可能影响文件统计
+    syncManager.refreshStats(taskId);
     return true;
   },
 );
