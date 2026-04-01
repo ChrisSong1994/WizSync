@@ -21,6 +21,7 @@ export interface SyncTask {
 export interface BackupFile {
   name: string
   path: string
+  relativePath: string
   size: number
   mtime: number
 }

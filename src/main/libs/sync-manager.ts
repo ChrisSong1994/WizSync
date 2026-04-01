@@ -254,6 +254,7 @@ export class SyncManager {
         args.push("-backup", "Name *");
         args.push("-backuplocation", "central");
         args.push("-backupdir", task.backupPath);
+        args.push("-backupprefix", "bak.$VERSION.");
       } catch (err) {
         console.error("创建备份目录失败:", err);
       }

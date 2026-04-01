@@ -137,18 +137,25 @@ app.whenReady().then(() => {
   setTimeout(() => {
     const tasks = syncStore.getTasks();
 
-    // 清理 30 天前的备份文件
+    // 清理 30 天前的备份文件（递归，跳过隐藏文件）
     const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
     const now = Date.now();
-    tasks.forEach((task) => {
-      if (!task.backupPath || !fs.existsSync(task.backupPath)) return;
+    const cleanOldBackups = (dir: string) => {
       try {
-        fs.readdirSync(task.backupPath).forEach((file) => {
-          const fullPath = path.join(task.backupPath!, file);
-          const mtime = fs.statSync(fullPath).mtimeMs;
-          if (now - mtime > THIRTY_DAYS) fs.unlinkSync(fullPath);
+        fs.readdirSync(dir, { withFileTypes: true }).forEach((entry) => {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            cleanOldBackups(fullPath);
+          } else if (entry.isFile()) {
+            const mtime = fs.statSync(fullPath).mtimeMs;
+            if (now - mtime > THIRTY_DAYS) fs.unlinkSync(fullPath);
+          }
         });
       } catch {}
+    };
+    tasks.forEach((task) => {
+      if (!task.backupPath || !fs.existsSync(task.backupPath)) return;
+      cleanOldBackups(task.backupPath);
     });
 
     tasks.forEach((task) => {
@@ -336,16 +343,27 @@ ipcMain.handle("list-backup-files", async (_event, id: string) => {
 
   const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
   const now = Date.now();
-  const files = fs.readdirSync(task.backupPath);
-  return files
-    .map((file) => {
-      const fullPath = path.join(task.backupPath!, file);
-      const stats = fs.statSync(fullPath);
-      return { stats, name: file, path: fullPath, size: stats.size, mtime: stats.mtimeMs };
-    })
-    .filter((f) => f.stats.isFile() && now - f.mtime < THIRTY_DAYS)
-    .map(({ stats: _s, ...rest }) => rest)
-    .sort((a, b) => b.mtime - a.mtime);
+  const results: { name: string; path: string; relativePath: string; size: number; mtime: number }[] = [];
+
+  const scan = (dir: string) => {
+    try {
+      fs.readdirSync(dir, { withFileTypes: true }).forEach((entry) => {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          scan(fullPath);
+        } else if (entry.isFile()) {
+          const stats = fs.statSync(fullPath);
+          if (now - stats.mtimeMs < THIRTY_DAYS) {
+            const relativePath = path.relative(task.backupPath!, fullPath);
+            results.push({ name: entry.name, path: fullPath, relativePath, size: stats.size, mtime: stats.mtimeMs });
+          }
+        }
+      });
+    } catch {}
+  };
+
+  scan(task.backupPath);
+  return results.sort((a, b) => b.mtime - a.mtime);
 });
 
 ipcMain.handle("delete-backup-file", (_event, filePath: string) => {
