@@ -92,12 +92,40 @@ export class SyncManager {
         if (task && (task.mode === "realtime" || task.mode === "scheduled")) {
           this.startTask(task);
         }
+      },
+      (taskId, side) => {
+        this.handleDiskDisconnected(taskId, side);
       }
     );
   }
 
   setStatusChangeCallback(cb: () => void) {
     this.onStatusChange = cb;
+  }
+
+  /**
+   * 处理磁盘断开连接
+   */
+  private handleDiskDisconnected(taskId: string, side: "source" | "target" | "both") {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    // 停止任务
+    this.stopTask(taskId);
+    
+    // 更新状态为暂停
+    this.updateStatus(taskId, "paused");
+    
+    // 记录日志
+    const sideText = side === "source" ? "源端" : side === "target" ? "目标端" : "两端";
+    logManager.write(taskId, `[磁盘断开] ${sideText}磁盘已断开连接，任务已暂停`);
+    
+    // 发送通知到前端
+    this.win?.webContents.send("sync-log", { 
+      id: taskId, 
+      log: `警告: ${sideText}磁盘已断开连接，任务已暂停` 
+    });
   }
 
   public getLogs(id: string): string {

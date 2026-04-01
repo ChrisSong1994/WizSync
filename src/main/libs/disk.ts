@@ -11,6 +11,7 @@ export class DiskManager {
   private win: BrowserWindow | null = null;
   private onStatusChange: (() => void) | null = null;
   private onDiskReconnected: ((taskId: string) => void) | null = null;
+  private onDiskDisconnected: ((taskId: string, side: "source" | "target" | "both") => void) | null = null;
   private diskSpaceTimer: NodeJS.Timeout | null = null;
 
   /**
@@ -33,10 +34,16 @@ export class DiskManager {
   /**
    * 设置窗口和回调引用
    */
-  init(win: BrowserWindow, onStatusChange: () => void, onDiskReconnected: (taskId: string) => void) {
+  init(
+    win: BrowserWindow, 
+    onStatusChange: () => void, 
+    onDiskReconnected: (taskId: string) => void,
+    onDiskDisconnected: (taskId: string, side: "source" | "target" | "both") => void
+  ) {
     this.win = win;
     this.onStatusChange = onStatusChange;
     this.onDiskReconnected = onDiskReconnected;
+    this.onDiskDisconnected = onDiskDisconnected;
     this.startMonitoring();
   }
 
@@ -58,9 +65,22 @@ export class DiskManager {
         const isNowSourceOnline = !!sourceDisk;
         const isNowTargetOnline = !!targetDisk;
 
-        // 自动重连逻辑：如果之前是离线状态，现在在线了，且任务处于 error 状态（通常由离线引起）
+        // 磁盘断开检测：如果之前是在线状态，现在离线了
+        if ((!wasSourceOffline && !isNowSourceOnline) || (!wasTargetOffline && !isNowTargetOnline)) {
+          let side: "source" | "target" | "both" = "both";
+          if (!wasSourceOffline && !isNowSourceOnline && wasTargetOffline === isNowTargetOnline) {
+            side = "source";
+          } else if (!wasTargetOffline && !isNowTargetOnline && wasSourceOffline === isNowSourceOnline) {
+            side = "target";
+          }
+          
+          logManager.write(task.id, `[磁盘监控] 检测到磁盘断开连接 (${side === "source" ? "源端" : side === "target" ? "目标端" : "两端"})，正在停止任务...`);
+          this.onDiskDisconnected?.(task.id, side);
+        }
+
+        // 自动重连逻辑：如果之前是离线状态，现在在线了，且任务处于 error 或 paused 状态
         if ((wasSourceOffline && isNowSourceOnline) || (wasTargetOffline && isNowTargetOnline)) {
-          if (task.status === "error" || task.status === "idle") {
+          if (task.status === "error" || task.status === "paused" || task.status === "idle") {
              // 只有当两端都上线时才触发重连
              if (isNowSourceOnline && isNowTargetOnline) {
                 logManager.write(task.id, "[磁盘监控] 检测到磁盘重新连接，正在尝试自动恢复同步...");

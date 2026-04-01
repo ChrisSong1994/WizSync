@@ -6,7 +6,7 @@ export interface SyncTask {
   mode: "realtime" | "scheduled" | "manual";
   interval?: number; // 单位：分钟
   direction: "bidirectional" | "sourceToTarget" | "targetToSource";
-  status: "idle" | "syncing" | "error";
+  status: "idle" | "syncing" | "error" | "paused";
   lastSyncTime?: string;
   useParallel?: boolean;
   sourceStats?: { size: number; count: number };
