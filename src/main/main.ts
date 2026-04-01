@@ -21,6 +21,19 @@ if (process.platform === "darwin") {
 process.env.APP_ROOT = APP_ROOT;
 
 /**
+ * 获取二进制文件所在目录
+ */
+export function getBinDir(): string {
+  const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
+  let binDir = path.join(app.getAppPath(), "src/resources/bin", arch);
+
+  if (binDir.includes("app.asar")) {
+    binDir = binDir.replace("app.asar", "app.asar.unpacked");
+  }
+  return binDir;
+}
+
+/**
  * 获取 Unison 二进制文件的路径
  */
 export function getUnisonPath(): string {
@@ -28,33 +41,26 @@ export function getUnisonPath(): string {
     return "unison";
   }
 
-  const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
-
-  // 使用 app.getAppPath() 获取应用根目录
-  let resourcePath = path.join(
-    app.getAppPath(),
-    "src/resources/bin",
-    arch,
-    "unison",
-  );
-
-  // 处理 ASAR unpack 后的路径
-  if (resourcePath.includes("app.asar")) {
-    resourcePath = resourcePath.replace("app.asar", "app.asar.unpacked");
-  }
+  const binDir = getBinDir();
+  const resourcePath = path.join(binDir, "unison");
+  const monitorPath = path.join(binDir, "unison-fsmonitor");
 
   // 确保二进制文件具有可执行权限
-  try {
-    if (fs.existsSync(resourcePath)) {
-      const stats = fs.statSync(resourcePath);
-      // 如果没有执行权限 (0o111)，则添加权限
-      if (!(stats.mode & 0o111)) {
-        fs.chmodSync(resourcePath, 0o755);
+  const fixPerms = (p: string) => {
+    try {
+      if (fs.existsSync(p)) {
+        const stats = fs.statSync(p);
+        if (!(stats.mode & 0o111)) {
+          fs.chmodSync(p, 0o755);
+        }
       }
+    } catch (err) {
+      console.error(`修复权限失败: ${p}`, err);
     }
-  } catch (err) {
-    console.error("修复二进制权限失败:", err);
-  }
+  };
+
+  fixPerms(resourcePath);
+  fixPerms(monitorPath);
 
   return resourcePath;
 }

@@ -101,7 +101,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
 
         {/* 任务信息 */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-0.5">
             <h3 className="text-lg font-bold text-slate-800 truncate">
               {task.name}
             </h3>
@@ -116,12 +116,21 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               )}
             >
               {task.mode === "realtime"
-                ? "实时监听"
+                ? "实时"
                 : task.mode === "scheduled"
-                  ? `定时 (${task.interval}min)`
-                  : "手动同步"}
+                  ? `定时 ${task.interval}m`
+                  : "手动"}
             </span>
           </div>
+
+          {/* 最近同步时间移到这里 */}
+          {task.lastSyncTime && (
+            <div className="flex items-center gap-1 text-[11px] text-slate-400 mb-2">
+              <Clock size={11} />
+              <span>最后同步: {task.lastSyncTime}</span>
+            </div>
+          )}
+
           <div className="flex items-center gap-3 text-sm text-slate-500">
             <div className="flex flex-col">
               <div className="flex items-center gap-1 group/path">
@@ -216,94 +225,112 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         </div>
 
         {/* 操作按钮 */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          {/* 对比差异 - 幽灵按钮 */}
           <button
             onClick={() => onCompare(task.id)}
-            disabled={task.status === "syncing"}
-            className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-              task.status === "syncing"
-                ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                : "bg-slate-50 text-slate-600 hover:bg-slate-100"
-            )}
-            title={task.status === "syncing" ? "同步进行中，无法对比" : "对比差异"}
+            className="w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-95 text-slate-400 hover:bg-slate-100 hover:text-blue-600"
+            title={task.status === "syncing" ? "查看实时同步差异" : "对比差异分析"}
           >
-            <FileSearch size={20} />
+            <FileSearch size={18} />
           </button>
-          <button
-            onClick={() => onShowBackup(task.id)}
-            className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
-            title="查看备份数据"
-          >
-            <Archive size={20} />
-          </button>
+          
+          {/* 强制重启 - 幽灵按钮 */}
           <button
             onClick={handleReset}
             disabled={task.status === "syncing" || resetting}
             className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
+              "w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-95",
               task.status === "syncing" || resetting
-                ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+                ? "text-slate-200 cursor-not-allowed"
+                : "text-slate-400 hover:bg-amber-50 hover:text-amber-600"
             )}
-            title="强制重置 (解决顽固报错)"
+            title="强制重置同步状态 (解决顽固报错)"
           >
-            {resetting ? <Loader2 size={18} className="animate-spin" /> : <RotateCcw size={20} />}
+            {resetting ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={18} />}
           </button>
+
+          {/* 分隔线 */}
+          <div className="w-px h-6 bg-slate-100 mx-1" />
+
+          {/* 同步主按钮 - 核心视觉焦点 */}
           <button
             onClick={() => onToggleSync(task)}
             className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
+              "h-10 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm",
               task.status === "syncing"
                 ? "bg-amber-100 text-amber-600 hover:bg-amber-200"
-                : "bg-blue-50 text-blue-600 hover:bg-blue-100",
+                : "bg-blue-600 text-white shadow-blue-100 hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-200",
             )}
-            title={task.status === "syncing" ? "停止同步" : "开始同步"}
+            title={task.status === "syncing" ? "停止当前同步" : "立即开始同步"}
           >
             {task.status === "syncing" ? (
-              <StopCircle size={22} />
+              <>
+                <StopCircle size={18} />
+                <span className="text-sm font-bold">停止</span>
+              </>
             ) : (
-              <Play size={22} fill="currentColor" />
+              <>
+                <Play size={18} fill="currentColor" />
+                <span className="text-sm font-bold">同步</span>
+              </>
             )}
           </button>
-          <button
-            onClick={() => onEditTask(task)}
-            className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
-            title="编辑任务"
-          >
-            <Edit3 size={20} />
-          </button>
-          <button
-            onClick={handleDeleteClick}
-            disabled={deleting}
-            className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-              deleting
-                ? "bg-red-100 text-red-400 cursor-not-allowed"
-                : "bg-red-50 text-red-600 hover:bg-red-100"
+
+          {/* 更多菜单 */}
+          <div className="relative ml-1" ref={menuRef}>
+            <button
+              onClick={() => setShowMenu(!showMenu)}
+              className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-95",
+                showMenu ? "bg-slate-100 text-slate-800" : "text-slate-300 hover:bg-slate-50 hover:text-slate-600"
+              )}
+            >
+              <MoreVertical size={18} />
+            </button>
+
+            {showMenu && (
+              <div className="absolute right-0 top-full mt-2 w-52 bg-white rounded-2xl shadow-2xl border border-slate-100 py-2 z-50 animate-in fade-in zoom-in duration-200 origin-top-right">
+                <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">配置与维护</div>
+                <button
+                  onClick={() => { onEditTask(task); setShowMenu(false); }}
+                  className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <Edit3 size={16} className="text-slate-400" />
+                  <span>修改任务配置</span>
+                </button>
+                <button
+                  onClick={() => { onShowLogs(task.id); setShowMenu(false); }}
+                  className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <Clock size={16} className="text-slate-400" />
+                  <span>查看运行日志</span>
+                </button>
+                <button
+                  onClick={() => { onShowBackup(task.id); setShowMenu(false); }}
+                  className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <Archive size={16} className="text-slate-400" />
+                  <span>管理备份快照</span>
+                </button>
+                <div className="h-px bg-slate-50 my-1.5 mx-2" />
+                <button
+                  onClick={handleDeleteClick}
+                  disabled={deleting}
+                  className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  {deleting ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Trash2 size={16} />
+                  )}
+                  <span>移除此任务</span>
+                </button>
+              </div>
             )}
-            title="删除任务"
-          >
-            {deleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={20} />}
-          </button>
+          </div>
         </div>
       </div>
-
-      {/* 最近同步信息 */}
-      {task.lastSyncTime && (
-        <div className="px-5 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-          <span className="text-[12px] text-slate-500 flex items-center gap-1">
-            <Clock size={12} />
-            最近同步: {task.lastSyncTime}
-          </span>
-          <button
-            onClick={() => onShowLogs(task.id)}
-            className="text-[12px] font-bold text-blue-600 hover:underline"
-          >
-            查看日志
-          </button>
-        </div>
-      )}
     </div>
   );
 };

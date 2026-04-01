@@ -2,11 +2,12 @@ import { spawn, ChildProcess } from "node:child_process";
 import chokidar from "chokidar";
 import { BrowserWindow } from "electron";
 import fs from "node:fs";
+import path from "node:path";
 import { SyncTask } from "./types";
 import { syncStore } from "./sync-store";
 import { getDirStats } from "./fs-utils";
 import { diskManager } from "./disk";
-import { getUnisonPath } from "../main";
+import { getUnisonPath, getBinDir } from "../main";
 import { logManager } from "./logs";
 
 /**
@@ -71,7 +72,17 @@ export class SyncManager {
   setWindow(win: BrowserWindow) {
     this.win = win;
     // 窗口就绪后初始化磁盘监控
-    diskManager.init(win, () => this.onStatusChange?.());
+    diskManager.init(
+      win, 
+      () => this.onStatusChange?.(),
+      (taskId) => {
+        const tasks = syncStore.getTasks();
+        const task = tasks.find(t => t.id === taskId);
+        if (task && (task.mode === "realtime" || task.mode === "scheduled")) {
+          this.startTask(task);
+        }
+      }
+    );
   }
 
   setStatusChangeCallback(cb: () => void) {
@@ -215,6 +226,19 @@ export class SyncManager {
     });
 
     watcher.on("all", (event, path) => {
+      // 如果是实时模式，Unison 已经通过 -repeat watch 自行处理同步了。
+      // 我们这里仅利用 Chokidar 来在文件变动后刷新 UI 统计信息（如最后同步时间、磁盘空间）。
+      if (task.mode === "realtime" && this.activeProcesses.has(task.id)) {
+        if (this.debounceTimers.has(task.id)) {
+          clearTimeout(this.debounceTimers.get(task.id)!);
+        }
+        const timer = setTimeout(() => {
+          this.refreshTaskStats(task.id, "syncing");
+        }, 3000); // 延迟 3 秒刷新，等待 Unison 完成写入
+        this.debounceTimers.set(task.id, timer);
+        return;
+      }
+
       if (this.isCoolingDown.get(task.id) || this.activeProcesses.has(task.id) || this.isTaskManualSyncing(task.id)) {
         if (!this.isTaskManualSyncing(task.id)) {
           this.hasPendingSync.set(task.id, true);
@@ -303,6 +327,11 @@ export class SyncManager {
       "-retry", "3",
     ];
 
+    // 如果是实时模式，启用 Unison 内置的监听模式
+    if (task.mode === "realtime") {
+      args.push("-repeat", "watch");
+    }
+
     // 根据同步方向优化策略
     if (task.direction === "sourceToTarget") {
       args.push("-prefer", task.sourcePath);
@@ -349,7 +378,13 @@ export class SyncManager {
     else if (task.direction === "targetToSource") args.push("-force", task.targetPath);
 
     const unisonPath = getUnisonPath();
-    const proc = spawn(unisonPath, args);
+    const binDir = getBinDir();
+    const proc = spawn(unisonPath, args, {
+      env: {
+        ...process.env,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH}`,
+      },
+    });
     this.activeProcesses.set(task.id, proc);
 
     // 记录 pid 到任务数据
@@ -424,36 +459,7 @@ export class SyncManager {
       }
       
       const status = code === 0 ? "idle" : "error";
-      const lastSyncTime = new Date().toLocaleString();
-      
-      if (fs.existsSync(task.sourcePath) && fs.existsSync(task.targetPath)) {
-        Promise.all([
-          getDirStats(task.sourcePath),
-          getDirStats(task.targetPath)
-        ]).then(([sourceStats, targetStats]) => {
-          const sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
-          const targetDisk = diskManager.getDiskSpace(task.targetPath) || undefined;
-
-          syncStore.updateTask(task.id, { 
-            status, 
-            lastSyncTime, 
-            sourceStats, 
-            targetStats,
-            sourceDisk,
-            targetDisk
-          });
-          
-          this.win?.webContents.send("sync-status", { 
-            id: task.id, 
-            status, 
-            lastSyncTime, 
-            sourceStats, 
-            targetStats,
-            sourceDisk,
-            targetDisk
-          });
-        });
-      }
+      await this.refreshTaskStats(task.id, status);
 
       logManager.write(task.id, `同步结束 (代码: ${code})`);
 
@@ -479,6 +485,48 @@ export class SyncManager {
     logManager.write(id, `状态更新: ${status}`);
     this.win?.webContents.send("sync-status", { id, status });
     this.onStatusChange?.();
+  }
+
+  /**
+   * 刷新任务统计信息（文件数、大小、磁盘空间、最后同步时间）
+   */
+  private async refreshTaskStats(id: string, status: SyncTask["status"]) {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+
+    const lastSyncTime = new Date().toLocaleString();
+    
+    if (fs.existsSync(task.sourcePath) && fs.existsSync(task.targetPath)) {
+      const [sourceStats, targetStats] = await Promise.all([
+        getDirStats(task.sourcePath),
+        getDirStats(task.targetPath)
+      ]);
+      
+      const sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
+      const targetDisk = diskManager.getDiskSpace(task.targetPath) || undefined;
+
+      syncStore.updateTask(id, { 
+        status, 
+        lastSyncTime, 
+        sourceStats, 
+        targetStats,
+        sourceDisk,
+        targetDisk
+      });
+      
+      this.win?.webContents.send("sync-status", { 
+        id, 
+        status, 
+        lastSyncTime, 
+        sourceStats, 
+        targetStats,
+        sourceDisk,
+        targetDisk
+      });
+    } else {
+      this.updateStatus(id, status);
+    }
   }
 }
 
