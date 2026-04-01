@@ -260,6 +260,9 @@ ipcMain.handle(
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return false;
 
+    // 标记正在手动同步，防止 Chokidar 触发 Unison 冲突
+    syncManager.setManualSyncing(taskId, true);
+
     const src =
       direction === "sourceToTarget"
         ? path.join(task.sourcePath, filePath)
@@ -292,6 +295,10 @@ ipcMain.handle(
       console.error("单文件同步失败:", err);
       logManager.write(taskId, `[错误] 单文件同步失败: ${err.message}`);
       return false;
+    } finally {
+      // 释放手动同步标记并请求延迟重置
+      syncManager.setManualSyncing(taskId, false);
+      syncManager.requestReset(taskId);
     }
   },
 );
@@ -398,6 +405,9 @@ ipcMain.handle(
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return false;
 
+    // 标记正在手动操作，防止同步引擎干扰
+    syncManager.setManualSyncing(taskId, true);
+
     const basePath = side === "source" ? task.sourcePath : task.targetPath;
     const fullPath = path.join(basePath, filePath);
 
@@ -412,6 +422,10 @@ ipcMain.handle(
       console.error("删除文件失败:", err);
       logManager.write(taskId, `[错误] 删除文件失败: ${err.message}`);
       return false;
+    } finally {
+      // 释放标记并请求延迟重置
+      syncManager.setManualSyncing(taskId, false);
+      syncManager.requestReset(taskId);
     }
   },
 );

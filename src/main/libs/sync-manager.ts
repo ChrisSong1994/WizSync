@@ -23,6 +23,47 @@ export class SyncManager {
 
   private isCoolingDown: Map<string, boolean> = new Map();
   private hasPendingSync: Map<string, boolean> = new Map();
+  private isManualSyncing: Map<string, boolean> = new Map();
+  private resetDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
+
+  /**
+   * 请求重置任务（带防抖，适用于批量手动操作后只重置一次）
+   */
+  public requestReset(id: string) {
+    if (this.resetDebounceTimers.has(id)) {
+      clearTimeout(this.resetDebounceTimers.get(id)!);
+    }
+    
+    const timer = setTimeout(async () => {
+      const tasks = syncStore.getTasks();
+      const task = tasks.find(t => t.id === id);
+      if (task) {
+        logManager.write(id, "[自动重置] 手动操作已完成，正在刷新引擎状态...");
+        await this.resetTask(task);
+      }
+      this.resetDebounceTimers.delete(id);
+    }, 1500);
+
+    this.resetDebounceTimers.set(id, timer);
+  }
+
+  /**
+   * 设置任务的手动同步状态
+   */
+  public setManualSyncing(id: string, syncing: boolean) {
+    if (syncing) {
+      this.isManualSyncing.set(id, true);
+    } else {
+      this.isManualSyncing.delete(id);
+    }
+  }
+
+  /**
+   * 检查任务是否正在进行手动同步
+   */
+  public isTaskManualSyncing(id: string): boolean {
+    return !!this.isManualSyncing.get(id);
+  }
 
   /**
    * 设置主窗口引用并初始化相关组件
@@ -174,8 +215,10 @@ export class SyncManager {
     });
 
     watcher.on("all", (event, path) => {
-      if (this.isCoolingDown.get(task.id) || this.activeProcesses.has(task.id)) {
-        this.hasPendingSync.set(task.id, true);
+      if (this.isCoolingDown.get(task.id) || this.activeProcesses.has(task.id) || this.isTaskManualSyncing(task.id)) {
+        if (!this.isTaskManualSyncing(task.id)) {
+          this.hasPendingSync.set(task.id, true);
+        }
         return;
       }
 
