@@ -1,6 +1,7 @@
 import { BrowserWindow } from "electron";
 import fs from "node:fs";
 import { syncStore } from "./sync-store";
+import { logManager } from "./logs";
 
 /**
  * 磁盘管理器类 (DiskManager)
