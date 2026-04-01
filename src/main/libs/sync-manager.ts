@@ -53,6 +53,22 @@ export class SyncManager {
     this.cleanUnisonArchives(task).catch(() => {});
   }
 
+  /**
+   * 重置任务：强制清理 Unison 缓存并重新启动同步
+   */
+  public async resetTask(task: SyncTask) {
+    this.stopTask(task.id);
+    logManager.write(task.id, "=== 强制重置同步缓存 (Archive) ===");
+    
+    // 强制等待 1 秒让磁盘句柄释放
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    await this.cleanUnisonArchives(task);
+    logManager.write(task.id, "缓存清理完成，正在重新初始化同步...");
+    
+    this.startTask(task);
+  }
+
   private cleanUnisonArchives(task: SyncTask): Promise<void> {
     return new Promise((resolve) => {
       const unisonPath = getUnisonPath();
@@ -225,8 +241,6 @@ export class SyncManager {
     const args = [
       "-batch",
       "-terse", 
-      "-prefer", "newer",
-      "-times",
       "-copyonconflict",
       "-ignoreinodenumbers",
       "-fat",
@@ -243,7 +257,24 @@ export class SyncManager {
       "-ignore", "Name desktop.ini",
       "-label", task.name,
       "-ignorelocks",
+      "-retry", "3",
     ];
+
+    // 根据同步方向优化策略
+    if (task.direction === "sourceToTarget") {
+      args.push("-prefer", task.sourcePath);
+      args.push("-force", task.sourcePath);
+      // 一向同步时，对目标端的变动不敏感，防止 "Destination updated" 报错
+      args.push("-times=false");
+    } else if (task.direction === "targetToSource") {
+      args.push("-prefer", task.targetPath);
+      args.push("-force", task.targetPath);
+      args.push("-times=false");
+    } else {
+      // 双向同步：以最新修改为准，需保持时间戳同步以识别变动
+      args.push("-prefer", "newer");
+      args.push("-times");
+    }
 
     // 添加备份配置
     if (task.backupPath) {
@@ -302,22 +333,32 @@ export class SyncManager {
       }
     };
 
+    const checkRetryNeeded = (text: string) => {
+      const retryPatterns = [
+        "Destination updated during synchronization",
+        "Synchronization incomplete",
+        "Failed to copy file",
+        "Error in copying",
+        "connection lost",
+        "fatal error",
+        "lost connection",
+        "is being used by another process"
+      ];
+      if (retryPatterns.some(p => text.includes(p))) {
+        needsRetry = true;
+      }
+    };
+
     proc.stdout.on("data", (data) => {
       const chunk: string = data.toString();
       outputBuffer += chunk;
-      if (chunk.includes("Destination updated during synchronization") ||
-          chunk.includes("Synchronization incomplete")) {
-        needsRetry = true;
-      }
+      checkRetryNeeded(chunk);
       if (outputBuffer.length > 2000) flushBuffer();
     });
 
     proc.stderr.on("data", (data) => {
       const errorMsg: string = data.toString();
-      if (errorMsg.includes("Destination updated during synchronization") ||
-          errorMsg.includes("Synchronization incomplete")) {
-        needsRetry = true;
-      }
+      checkRetryNeeded(errorMsg);
       logManager.write(task.id, `[stderr] ${errorMsg}`);
       this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${errorMsg}` });
     });
@@ -328,14 +369,14 @@ export class SyncManager {
       syncStore.updateTask(task.id, { pid: undefined });
 
       if (code !== 0 && needsRetry) {
-        const msg = "[自动重试] 同步中断，3 秒后重新同步...";
+        const msg = `[自动重试] 同步遇到异常 (代码: ${code})，5 秒后尝试重新连接同步...`;
         logManager.write(task.id, msg);
         this.win?.webContents.send("sync-log", { id: task.id, log: msg });
         setTimeout(() => {
           const tasks = syncStore.getTasks();
           const currentTask = tasks.find(t => t.id === task.id);
           if (currentTask) this.runUnison(currentTask);
-        }, 3000);
+        }, 5000);
         return;
       }
       

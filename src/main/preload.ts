@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteTask: (id: string) => ipcRenderer.invoke('delete-task', id),
   startSync: (id: string) => ipcRenderer.invoke('start-sync', id),
   stopSync: (id: string) => ipcRenderer.invoke('stop-sync', id),
+  resetSync: (id: string) => ipcRenderer.invoke('reset-sync', id),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   compareDirectories: (id: string) => ipcRenderer.invoke('compare-directories', id),
   getPersistentLogs: (id: string) => ipcRenderer.invoke('get-persistent-logs', id),

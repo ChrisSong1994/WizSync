@@ -40,6 +40,7 @@ export interface ElectronAPI {
   deleteTask: (id: string) => Promise<SyncTask[]>
   startSync: (id: string) => Promise<boolean>
   stopSync: (id: string) => Promise<boolean>
+  resetSync: (id: string) => Promise<boolean>
   selectDirectory: () => Promise<string | null>
   compareDirectories: (id: string) => Promise<DiffResult>
   getPersistentLogs: (id: string) => Promise<string>

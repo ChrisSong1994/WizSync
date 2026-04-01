@@ -227,6 +227,14 @@ ipcMain.handle("stop-sync", (_event, id: string) => {
   return true;
 });
 
+ipcMain.handle("reset-sync", async (_event, id: string) => {
+  const tasks = syncStore.getTasks();
+  const task = tasks.find((t) => t.id === id);
+  if (!task) return false;
+  await syncManager.resetTask(task);
+  return true;
+});
+
 ipcMain.handle("get-persistent-logs", (_event, id: string) => {
   return syncManager.getLogs(id);
 });

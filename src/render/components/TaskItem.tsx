@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   Play,
   StopCircle,
@@ -13,6 +13,8 @@ import {
   FileSearch,
   MapPin,
   Archive,
+  RotateCcw,
+  MoreVertical,
 } from "lucide-react";
 import { SyncTask } from "../types";
 import { cn, formatSize } from "../utils";
@@ -37,15 +39,39 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onShowBackup,
 }) => {
   const [deleting, setDeleting] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const handleReveal = (side: "source" | "target") => {
     window.electronAPI.revealInFileExplorer(task.id, "", side);
   };
 
   const handleDeleteClick = async () => {
+    setShowMenu(false);
     if (!await window.electronAPI.showConfirm(`确定要删除任务「${task.name}」吗？\n此操作将停止同步并清理相关进程。`)) return;
     setDeleting(true);
     await onDeleteTask(task.id);
+  };
+
+  const handleReset = async () => {
+    if (!await window.electronAPI.showConfirm(`确定要强制重置任务「${task.name}」吗？\n这将清理同步缓存并重新扫描所有文件，通常用于解决顽固报错。`)) return;
+    setResetting(true);
+    try {
+      await window.electronAPI.resetSync(task.id);
+    } finally {
+      setResetting(false);
+    }
   };
 
   return (
@@ -210,6 +236,19 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             title="查看备份数据"
           >
             <Archive size={20} />
+          </button>
+          <button
+            onClick={handleReset}
+            disabled={task.status === "syncing" || resetting}
+            className={cn(
+              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
+              task.status === "syncing" || resetting
+                ? "bg-slate-50 text-slate-300 cursor-not-allowed"
+                : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+            )}
+            title="强制重置 (解决顽固报错)"
+          >
+            {resetting ? <Loader2 size={18} className="animate-spin" /> : <RotateCcw size={20} />}
           </button>
           <button
             onClick={() => onToggleSync(task)}
