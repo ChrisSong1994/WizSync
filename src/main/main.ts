@@ -41,30 +41,28 @@ export function getBinDir(): string {
  */
 export function getUnisonPath(): string {
   const binDir = getBinDir();
-  const unisonExe = process.platform === "win32" ? "unison.exe" : "unison";
-  const monitorExe = process.platform === "win32" ? "unison-fsmonitor.exe" : "unison-fsmonitor";
+  const unisonExe = "unison";
+  const monitorExe = "unison-fsmonitor";
   
   const resourcePath = path.join(binDir, unisonExe);
   const monitorPath = path.join(binDir, monitorExe);
 
-  // 确保二进制文件具有可执行权限 (仅限类 Unix 系统)
-  if (process.platform !== "win32") {
-    const fixPerms = (p: string) => {
-      try {
-        if (fs.existsSync(p)) {
-          const stats = fs.statSync(p);
-          if (!(stats.mode & 0o111)) {
-            fs.chmodSync(p, 0o755);
-          }
+  // 确保二进制文件具有可执行权限
+  const fixPerms = (p: string) => {
+    try {
+      if (fs.existsSync(p)) {
+        const stats = fs.statSync(p);
+        if (!(stats.mode & 0o111)) {
+          fs.chmodSync(p, 0o755);
         }
-      } catch (err) {
-        console.error(`修复权限失败: ${p}`, err);
       }
-    };
+    } catch (err) {
+      console.error(`修复权限失败: ${p}`, err);
+    }
+  };
 
-    fixPerms(resourcePath);
-    fixPerms(monitorPath);
-  }
+  fixPerms(resourcePath);
+  fixPerms(monitorPath);
 
   // 导出环境变量供 Unison 引擎识别 (尤其是 monitor)
   process.env.UNISON_FSMONITOR = monitorPath;
@@ -496,8 +494,13 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
   ]);
 
   const ignoredPaths = task.ignoredPaths || [];
+
   const isIgnored = (relPath: string) => {
-    return ignoredPaths.some(p => relPath === p || relPath.startsWith(p + path.sep));
+    const lowerRelPath = relPath.toLowerCase();
+    return ignoredPaths.some(p => {
+      const lowerP = p.toLowerCase();
+      return lowerRelPath === lowerP || lowerRelPath.startsWith(lowerP + path.sep);
+    });
   };
 
   const diff = {
@@ -507,27 +510,53 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
     ignored: [] as any[],
   };
 
+  // 在 macOS 上，建立目标文件列表的规范化映射（小写 -> 原始路径）
+  // 这有助于解决如 SubDir/file.txt 匹配 subdir/file.txt 的问题
+  const targetFilesNormalized = new Map(Array.from(targetFiles.keys()).map(k => [k.toLowerCase(), k]));
+
   let processedCount = 0;
   for (const [relPath, sInfo] of sourceFiles) {
     if (isIgnored(relPath)) {
-      diff.ignored.push({ path: relPath, size: sInfo.size, side: targetFiles.has(relPath) ? 'both' : 'source' });
+      const hasInTarget = targetFilesNormalized.has(relPath.toLowerCase());
+      diff.ignored.push({ 
+        path: relPath, 
+        size: sInfo.size, 
+        side: hasInTarget ? 'both' : 'source' 
+      });
       continue;
     }
 
-    const tInfo = targetFiles.get(relPath);
+    // 查找目标端对应的文件信息
+    let tInfo = targetFiles.get(relPath);
+    let matchedRelPath = relPath;
+
+    if (!tInfo) {
+      const realKey = targetFilesNormalized.get(relPath.toLowerCase());
+      if (realKey) {
+        tInfo = targetFiles.get(realKey);
+        matchedRelPath = realKey;
+      }
+    }
+
     if (!tInfo) {
       diff.sourceOnly.push({ path: relPath, size: sInfo.size });
-    } else if (
-      sInfo.size !== tInfo.size ||
-      Math.abs(sInfo.mtime - tInfo.mtime) > 2000
-    ) {
-      diff.different.push({
-        path: relPath,
-        sourceSize: sInfo.size,
-        targetSize: tInfo.size,
-        sourceMtime: sInfo.mtime,
-        targetMtime: tInfo.mtime,
-      });
+    } else {
+      // 标记该目标文件已处理，防止出现在 targetOnly 中
+      targetFiles.delete(matchedRelPath);
+      targetFilesNormalized.delete(matchedRelPath.toLowerCase());
+
+      if (
+        sInfo.size !== tInfo.size ||
+        Math.abs(sInfo.mtime - tInfo.mtime) > 2000
+      ) {
+        diff.different.push({
+          path: relPath,
+          sourceSize: sInfo.size,
+          targetSize: tInfo.size,
+          sourceMtime: sInfo.mtime,
+          targetMtime: tInfo.mtime,
+        });
+      }
     }
 
     processedCount++;
@@ -537,8 +566,6 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
   }
 
   for (const [relPath, tInfo] of targetFiles) {
-    if (sourceFiles.has(relPath)) continue;
-    
     if (isIgnored(relPath)) {
       diff.ignored.push({ path: relPath, size: tInfo.size, side: 'target' });
       continue;

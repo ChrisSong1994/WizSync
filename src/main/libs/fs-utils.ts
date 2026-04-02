@@ -15,7 +15,9 @@ export const IGNORE_PATTERNS = [
  */
 function shouldSkip(name: string): boolean {
   if (name.startsWith(".")) return true;
-  return IGNORE_PATTERNS.some(p => name === p);
+  // macOS 默认不区分大小写
+  const lowerName = name.toLowerCase();
+  return IGNORE_PATTERNS.some(p => lowerName === p.toLowerCase());
 }
 
 /**
@@ -26,24 +28,30 @@ export async function getDirStats(
 ): Promise<{ size: number; count: number }> {
   let size = 0;
   let count = 0;
+  if (!fs.existsSync(dirPath)) return { size: 0, count: 0 };
+  
   try {
-    if (!fs.existsSync(dirPath)) return { size: 0, count: 0 };
     const files = await fs.promises.readdir(dirPath, { withFileTypes: true });
     await Promise.all(files.map(async (file) => {
       if (shouldSkip(file.name)) return;
       const fullPath = path.join(dirPath, file.name);
-      if (file.isDirectory()) {
-        const subStats = await getDirStats(fullPath);
-        size += subStats.size;
-        count += subStats.count;
-      } else {
-        const stats = await fs.promises.stat(fullPath);
-        size += stats.size;
-        count++;
+      
+      try {
+        if (file.isDirectory()) {
+          const subStats = await getDirStats(fullPath);
+          size += subStats.size;
+          count += subStats.count;
+        } else {
+          const stats = await fs.promises.stat(fullPath);
+          size += stats.size;
+          count++;
+        }
+      } catch (err) {
+        console.error(`获取路径统计信息失败: ${fullPath}`, err);
       }
     }));
   } catch (err) {
-    console.error("获取统计信息失败:", err);
+    console.error("读取目录失败:", dirPath, err);
   }
   return { size, count };
 }
@@ -60,8 +68,9 @@ export async function getAllFiles(
 ): Promise<Map<string, { size: number; mtime: number }>> {
   const result = new Map<string, { size: number; mtime: number }>();
   
+  if (!fs.existsSync(dirPath)) return result;
+
   try {
-    if (!fs.existsSync(dirPath)) return result;
     const files = await fs.promises.readdir(dirPath, { withFileTypes: true });
     
     for (const file of files) {
@@ -70,23 +79,29 @@ export async function getAllFiles(
       const fullPath = path.join(dirPath, file.name);
       const relPath = path.relative(baseDir, fullPath);
 
-      if (file.isDirectory()) {
-        const subFiles = await getAllFiles(fullPath, baseDir, state, onProgress);
-        subFiles.forEach((v, k) => result.set(k, v));
-      } else {
-        const stats = await fs.promises.stat(fullPath);
-        result.set(relPath, { size: stats.size, mtime: stats.mtimeMs });
-        state.count++;
-        
-        // 每 200 个文件报告一次进度，减少回调频率
-        if (state.count % 200 === 0) {
-          onProgress?.(state.count);
-          await new Promise(resolve => setImmediate(resolve));
+      try {
+        if (file.isDirectory()) {
+          const subFiles = await getAllFiles(fullPath, baseDir, state, onProgress);
+          subFiles.forEach((v, k) => result.set(k, v));
+        } else {
+          const stats = await fs.promises.stat(fullPath);
+          result.set(relPath, { size: stats.size, mtime: stats.mtimeMs });
+          state.count++;
+          
+          // 每 200 个文件报告一次进度，减少回调频率
+          if (state.count % 200 === 0) {
+            onProgress?.(state.count);
+            await new Promise(resolve => setImmediate(resolve));
+          }
         }
+      } catch (err) {
+        console.error(`扫描文件失败: ${fullPath}`, err);
+        // 继续扫描其他文件
       }
     }
   } catch (err) {
-    console.error("获取文件列表失败:", err);
+    console.error("读取目录失败:", dirPath, err);
   }
+  
   return result;
 }
