@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState } from "react";
 import {
   Play,
   StopCircle,
@@ -332,7 +332,10 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           title="查看运行日志"
         >
           <span>运行日志</span>
-          <ArrowRight size={12} className="group-hover/log:translate-x-0.5 transition-transform" />
+          <ArrowRight
+            size={12}
+            className="group-hover/log:translate-x-0.5 transition-transform"
+          />
         </button>
       </div>
     </div>

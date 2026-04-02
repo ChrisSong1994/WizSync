@@ -25,14 +25,14 @@ process.env.APP_ROOT = APP_ROOT;
  */
 export function getBinDir(): string {
   const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
-  const relativePath = path.join("src/resources/bin", arch);
   
   if (app.isPackaged) {
     // 生产环境下，asarUnpack 会将文件解压到 app.asar.unpacked 目录
-    return path.join(app.getAppPath() + ".unpacked", relativePath);
+    // electron-builder 默认打包时可能改变了层级，这里使用更通用的定位方式
+    return path.join(process.resourcesPath, "app.asar.unpacked", "src/resources/bin", arch);
   } else {
     // 开发环境下
-    return path.join(app.getAppPath(), relativePath);
+    return path.join(app.getAppPath(), "src/resources/bin", arch);
   }
 }
 

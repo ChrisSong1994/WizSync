@@ -357,6 +357,7 @@ export class SyncManager {
       "-xferbycopying",
       "-fastcheck=true",
       "-ui", "text",
+      "-ignore", "Name .DS_Store",
       "-ignore", "Name .*",
       "-ignore", "Name node_modules",
       "-ignore", "Name Thumbs.db",
