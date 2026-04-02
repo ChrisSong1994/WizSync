@@ -177,12 +177,17 @@ ipcMain.handle("show-confirm", async (_event, message: string) => {
 });
 
 ipcMain.handle("get-default-backup-path", (_event, taskId: string) => {
+  const tasks = syncStore.getTasks();
+  const task = tasks.find(t => t.id === taskId);
+  if (task?.targetPath) {
+    return path.join(task.targetPath, ".wizsync", "backups");
+  }
   return path.join(app.getPath("userData"), "backups", taskId);
 });
 
 ipcMain.handle("save-task", async (_event, task: SyncTask) => {
-  if (!task.backupPath) {
-    task.backupPath = path.join(app.getPath("userData"), "backups", task.id);
+  if (!task.backupPath && task.targetPath) {
+    task.backupPath = path.join(task.targetPath, ".wizsync", "backups");
   }
   task.sourceStats = await getDirStats(task.sourcePath);
   task.targetStats = await getDirStats(task.targetPath);
@@ -339,7 +344,12 @@ ipcMain.handle("open-log-folder", (_event, id: string) => {
 ipcMain.handle("open-backup-folder", (_event, id: string) => {
   const tasks = syncStore.getTasks();
   const task = tasks.find((t) => t.id === id);
-  const backupPath = task?.backupPath || path.join(app.getPath("userData"), "backups", id);
+  let backupPath = task?.backupPath;
+  if (!backupPath && task?.targetPath) {
+    backupPath = path.join(task.targetPath, ".wizsync", "backups");
+  } else if (!backupPath) {
+    backupPath = path.join(app.getPath("userData"), "backups", id);
+  }
   if (!fs.existsSync(backupPath)) {
     fs.mkdirSync(backupPath, { recursive: true });
   }
@@ -461,6 +471,10 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
   const tasks = syncStore.getTasks();
   const task = tasks.find((t) => t.id === id);
   if (!task) throw new Error("Task not found");
+
+  if (task.status === "syncing") {
+    throw new Error("Task is currently syncing. Cannot compare directories.");
+  }
 
   const sendProgress = (count: number) => {
     event.sender.send("compare-progress", { id, count });

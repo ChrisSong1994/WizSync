@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from "node:child_process";
 import { BrowserWindow } from "electron";
 import fs from "node:fs";
+import path from "node:path";
 import { SyncTask } from "./types";
 import { syncStore } from "./sync-store";
 import { getDirStats } from "./fs-utils";
@@ -107,29 +108,16 @@ export class SyncManager {
 
   private cleanUnisonArchives(task: SyncTask): Promise<void> {
     return new Promise((resolve) => {
-      const unisonPath = getUnisonPath();
-      const proc = spawn(unisonPath, ["-showarchive", task.sourcePath, task.targetPath]);
-      let output = "";
-
-      // 5 秒超时，防止进程挂死
-      const timer = setTimeout(() => { proc.kill(); resolve(); }, 5000);
-
-      proc.stdout.on("data", (data) => { output += data.toString(); });
-      proc.stderr.on("data", (data) => { output += data.toString(); });
-
-      proc.on("close", () => {
-        clearTimeout(timer);
-        const matches = [...output.matchAll(/[Aa]rchive\s+file[^:]*:\s*(.+)/g)];
-        for (const match of matches) {
-          const archivePath = match[1].trim();
-          try {
-            if (fs.existsSync(archivePath)) fs.unlinkSync(archivePath);
-          } catch {}
+      const metadataDir = path.join(task.targetPath, ".wizsync", "unison");
+      try {
+        if (fs.existsSync(metadataDir)) {
+          fs.rmSync(metadataDir, { recursive: true, force: true });
+          logManager.write(task.id, `[清理] 已删除本地元数据目录: ${metadataDir}`);
         }
-        resolve();
-      });
-
-      proc.on("error", () => { clearTimeout(timer); resolve(); });
+      } catch (err: any) {
+        logManager.write(task.id, `[警告] 清理元数据目录失败: ${err.message}`);
+      }
+      resolve();
     });
   }
 
@@ -233,6 +221,7 @@ export class SyncManager {
       "-ignore", "Name node_modules",
       "-ignore", "Name Thumbs.db",
       "-ignore", "Name desktop.ini",
+      "-ignore", "Path .wizsync", // 强制忽略本地元数据目录
       "-label", task.name,
       "-ignorelocks",
       "-retry", "3",
@@ -285,7 +274,19 @@ export class SyncManager {
     else if (task.direction === "targetToSource") args.push("-force", task.targetPath);
 
     const unisonPath = getUnisonPath();
-    const proc = spawn(unisonPath, args);
+    
+    // 关键：通过环境变量 UNISON 限制元数据存储在目标目录内，不修改外部文件
+    const metadataDir = path.join(task.targetPath, ".wizsync", "unison");
+    if (!fs.existsSync(metadataDir)) {
+      fs.mkdirSync(metadataDir, { recursive: true });
+    }
+    
+    const env = { 
+      ...process.env, 
+      UNISON: metadataDir 
+    };
+
+    const proc = spawn(unisonPath, args, { env });
     this.activeProcesses.set(task.id, proc);
 
     // 记录 pid 到任务数据

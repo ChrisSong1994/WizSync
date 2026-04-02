@@ -143,6 +143,9 @@ function App() {
    * 对比两个目录的差异
    */
   const handleCompare = async (taskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || task.status === "syncing") return;
+
     setComparingTaskId(taskId);
     setDiffData(null);
     try {
