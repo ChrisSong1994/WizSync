@@ -9,6 +9,7 @@ import { syncStore } from "./sync-store";
 export class DiskManager {
   private win: BrowserWindow | null = null;
   private onStatusChange: (() => void) | null = null;
+  private onDiskReconnect: ((taskId: string) => void) | null = null;
   private diskSpaceTimer: NodeJS.Timeout | null = null;
 
   /**
@@ -40,9 +41,10 @@ export class DiskManager {
   /**
    * 设置窗口和回调引用
    */
-  init(win: BrowserWindow, onStatusChange: () => void) {
+  init(win: BrowserWindow, onStatusChange: () => void, onDiskReconnect?: (taskId: string) => void) {
     this.win = win;
     this.onStatusChange = onStatusChange;
+    this.onDiskReconnect = onDiskReconnect || null;
     this.startMonitoring();
   }
 
@@ -71,6 +73,15 @@ export class DiskManager {
     tasks.forEach(task => {
       const sourceDisk = this.getDiskSpace(task.sourcePath);
       const targetDisk = this.getDiskSpace(task.targetPath);
+
+      // 检测磁盘恢复：之前有磁盘缺失（或记录显示缺失），现在全部在线
+      const wasOffline = !task.sourceDisk || !task.targetDisk;
+      const isOnline = !!sourceDisk && !!targetDisk;
+
+      if (wasOffline && isOnline && this.onDiskReconnect) {
+        // 使用 setImmediate 确保不阻塞监控主循环
+        setImmediate(() => this.onDiskReconnect!(task.id));
+      }
 
       // 显式对比关键数值（增加名称对比）
       const isSourceChanged = 

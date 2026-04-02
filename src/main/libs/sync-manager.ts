@@ -66,8 +66,26 @@ export class SyncManager {
    */
   setWindow(win: BrowserWindow) {
     this.win = win;
-    // 窗口就绪后初始化磁盘监控
-    diskManager.init(win, () => this.onStatusChange?.());
+    // 窗口就绪后初始化磁盘监控，增加重连回调
+    diskManager.init(
+      win, 
+      () => this.onStatusChange?.(),
+      (taskId) => this.handleDiskReconnect(taskId)
+    );
+  }
+
+  /**
+   * 处理磁盘重连逻辑
+   */
+  private handleDiskReconnect(taskId: string) {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find(t => t.id === taskId);
+    
+    // 如果是定时任务且当前处于错误状态（通常是由于之前的离线导致的），则尝试重新启动
+    if (task && task.mode === "scheduled" && task.status === "error") {
+      logManager.write(taskId, "[磁盘监控] 检测到磁盘已重连，正在尝试自动恢复同步...");
+      this.startTask(task);
+    }
   }
 
   setStatusChangeCallback(cb: () => void) {
@@ -208,11 +226,10 @@ export class SyncManager {
     this.win?.webContents.send("sync-log", { id: task.id, log: errorMsg });
     this.updateStatus(task.id, "error");
     
-    // 如果是定时任务，发生离线时停止定时器
-    if (this.timers.has(task.id)) {
-      clearInterval(this.timers.get(task.id)!);
-      this.timers.delete(task.id);
-    }
+    // 注意：不再主动停止定时器。定时器在触发时会继续检查磁盘状态。
+    // 如果磁盘一直离线，定时器会反复触发 handleOffline 并跳过 Unison。
+    // 一旦磁盘重连，DiskManager 会通过 handleDiskReconnect 立即拉起任务，
+    // 或者等待下一个定时周期自然恢复。
   }
 
   private setupScheduled(task: SyncTask) {
