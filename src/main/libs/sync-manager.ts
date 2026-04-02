@@ -304,6 +304,8 @@ export class SyncManager {
 
     let outputBuffer = "";
     let needsRetry = false;
+    let hasChanges = false; // 标记本次同步是否有文件变动
+    const lastStatsUpdateTime = new Map<string, number>();
 
     const flushBuffer = () => {
       if (outputBuffer) {
@@ -313,7 +315,7 @@ export class SyncManager {
       }
     };
 
-    const checkRetryNeeded = (text: string) => {
+    const checkStatus = (text: string) => {
       const retryPatterns = [
         "Destination updated during synchronization",
         "Synchronization incomplete",
@@ -327,18 +329,34 @@ export class SyncManager {
       if (retryPatterns.some(p => text.includes(p))) {
         needsRetry = true;
       }
+
+      // 简单的变更检测逻辑：如果输出包含常见的操作关键词（如 copying, deleting, moved 等），认为有变动
+      // 排除 "Nothing to do" 和 "Looking for changes"
+      const changePatterns = [
+        "copying",
+        "deleting",
+        "moving",
+        "rename",
+        "Updating propagation",
+        "changed",
+        "replaced"
+      ];
+      if (changePatterns.some(p => text.toLowerCase().includes(p.toLowerCase())) && 
+          !text.includes("Nothing to do")) {
+        hasChanges = true;
+      }
     };
 
     proc.stdout.on("data", (data) => {
       const chunk: string = data.toString();
       outputBuffer += chunk;
-      checkRetryNeeded(chunk);
+      checkStatus(chunk);
       if (outputBuffer.length > 2000) flushBuffer();
     });
 
     proc.stderr.on("data", (data) => {
       const errorMsg: string = data.toString();
-      checkRetryNeeded(errorMsg);
+      checkStatus(errorMsg);
       logManager.write(task.id, `[stderr] ${errorMsg}`);
       this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${errorMsg}` });
     });
@@ -363,36 +381,39 @@ export class SyncManager {
       const status = code === 0 ? "idle" : "error";
       const lastSyncTime = new Date().toLocaleString();
       
-      if (fs.existsSync(task.sourcePath) && fs.existsSync(task.targetPath)) {
-        Promise.all([
-          getDirStats(task.sourcePath),
-          getDirStats(task.targetPath)
-        ]).then(([sourceStats, targetStats]) => {
-          const sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
-          const targetDisk = diskManager.getDiskSpace(task.targetPath) || undefined;
+      // 优化点：仅在有文件变动，或者距离上次更新超过 10 分钟时才执行昂贵的目录统计
+      const now = Date.now();
+      const lastUpdate = lastStatsUpdateTime.get(task.id) || 0;
+      const shouldUpdateStats = hasChanges || (now - lastUpdate > 10 * 60 * 1000);
 
-          syncStore.updateTask(task.id, { 
-            status, 
-            lastSyncTime, 
-            sourceStats, 
-            targetStats,
-            sourceDisk,
-            targetDisk
-          });
-          
-          this.win?.webContents.send("sync-status", { 
-            id: task.id, 
-            status, 
-            lastSyncTime, 
-            sourceStats, 
-            targetStats,
-            sourceDisk,
-            targetDisk
-          });
-        });
+      if (fs.existsSync(task.sourcePath) && fs.existsSync(task.targetPath)) {
+        const updateTaskData: Partial<SyncTask> = { status, lastSyncTime };
+        
+        if (shouldUpdateStats) {
+          try {
+            const [sourceStats, targetStats] = await Promise.all([
+              getDirStats(task.sourcePath),
+              getDirStats(task.targetPath)
+            ]);
+            updateTaskData.sourceStats = sourceStats;
+            updateTaskData.targetStats = targetStats;
+            lastStatsUpdateTime.set(task.id, now);
+            if (hasChanges) logManager.write(task.id, "[优化] 检测到文件变动，已更新目录统计信息。");
+          } catch (err) {
+            console.error("更新统计信息失败:", err);
+          }
+        }
+
+        const sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
+        const targetDisk = diskManager.getDiskSpace(task.targetPath) || undefined;
+        updateTaskData.sourceDisk = sourceDisk;
+        updateTaskData.targetDisk = targetDisk;
+
+        syncStore.updateTask(task.id, updateTaskData);
+        this.win?.webContents.send("sync-status", { id: task.id, ...updateTaskData });
       }
 
-      logManager.write(task.id, `同步结束 (代码: ${code})`);
+      logManager.write(task.id, `同步结束 (代码: ${code})${hasChanges ? " [有变动]" : " [无变动]"}`);
       this.onStatusChange?.();
     });
   }
