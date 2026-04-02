@@ -120,7 +120,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
     for (const file of files) {
       const success = await window.electronAPI.syncSingleFile(taskId, file.path, direction);
-      if (success) setResolvedPaths(prev => new Set(prev).add(file.path));
+      if (success) setResolvedPaths(prev => { const next = new Set(prev); next.add(file.path); return next; });
     }
     setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
@@ -134,20 +134,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
     for (const file of files) {
       const success = await window.electronAPI.deleteFile(taskId, file.path, side);
-      if (success) setResolvedPaths(prev => new Set(prev).add(file.path));
-    }
-    setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
-  };
-
-  const handleConfirmAllRenamed = async (files: any[], sectionKey: string) => {
-    if (!await window.electronAPI.showConfirm(`确定要确认全部 ${files.length} 个重命名操作吗？`)) return;
-    setBatchSyncing(prev => new Set(prev).add(sectionKey));
-    for (const file of files) {
-      const success = await window.electronAPI.syncSingleFile(taskId, file.newPath, 'sourceToTarget');
-      if (success) {
-        await window.electronAPI.deleteFile(taskId, file.oldPath, 'target');
-        setResolvedPaths(prev => new Set(prev).add(file.oldPath).add(file.newPath));
-      }
+      if (success) setResolvedPaths(prev => { const next = new Set(prev); next.add(file.path); return next; });
     }
     setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
@@ -157,7 +144,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
     for (const file of files) {
       const success = await window.electronAPI.ignorePath(taskId, file.path);
-      if (success) setResolvedPaths(prev => new Set(prev).add(file.path));
+      if (success) setResolvedPaths(prev => { const next = new Set(prev); next.add(file.path); return next; });
     }
     setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
@@ -167,8 +154,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   const activeDifferent = diffData?.different.filter(f => !resolvedPaths.has(f.path)) || [];
   const activeSourceOnly = diffData?.sourceOnly.filter(f => !resolvedPaths.has(f.path)) || [];
   const activeTargetOnly = diffData?.targetOnly.filter(f => !resolvedPaths.has(f.path)) || [];
-  const activeRenamed = diffData?.renamed.filter(f => !resolvedPaths.has(f.oldPath) && !resolvedPaths.has(f.newPath)) || [];
-  const totalActiveDiffs = activeDifferent.length + activeSourceOnly.length + activeTargetOnly.length + activeRenamed.length;
+  const totalActiveDiffs = activeDifferent.length + activeSourceOnly.length + activeTargetOnly.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -315,106 +301,6 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                                     title="在目标端定位文件"
                                   >
                                     <MapPin size={14} />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  )}
-
-                  {/* 重命名或移动的文件 */}
-                  {activeRenamed.length > 0 && (
-                    <section>
-                      <div className="flex items-center justify-between mb-3">
-                        <button
-                          onClick={() => toggleSection('renamed')}
-                          className="flex items-center gap-2 group"
-                        >
-                          <h3 className="text-sm font-bold text-indigo-600 flex items-center gap-2">
-                            <ChevronsRight size={16} />
-                            重命名或移动 ({activeRenamed.length})
-                          </h3>
-                          <span className="text-slate-400 group-hover:text-indigo-500 transition-colors">
-                            {collapsedSections.has('renamed') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
-                          </span>
-                        </button>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => handleConfirmAllRenamed(activeRenamed, 'renamedConfirm')}
-                            disabled={batchSyncing.has('renamedConfirm') || batchSyncing.has('renamedIgnore')}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
-                          >
-                            {batchSyncing.has('renamedConfirm') ? (
-                              <Loader2 size={12} className="animate-spin" />
-                            ) : (
-                              <CheckCircle2 size={12} />
-                            )}
-                            全部确认
-                          </button>
-                          <button
-                            onClick={() => handleIgnoreAll(activeRenamed.map(f => ({ path: f.newPath })), 'renamedIgnore')}
-                            disabled={batchSyncing.has('renamedConfirm') || batchSyncing.has('renamedIgnore')}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-500 hover:bg-slate-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
-                          >
-                            {batchSyncing.has('renamedIgnore') ? (
-                              <Loader2 size={12} className="animate-spin" />
-                            ) : (
-                              <EyeOff size={12} />
-                            )}
-                            全部忽略
-                          </button>
-                        </div>
-                      </div>
-                      {!collapsedSections.has('renamed') && (
-                        <div className="space-y-2 animate-in slide-in-from-top-1 duration-200">
-                          {activeRenamed.slice(0, MAX_DISPLAY).map((file, i) => (
-                            <div key={i} className="bg-indigo-50/30 border border-indigo-100 rounded-xl p-3 flex items-center justify-between group hover:border-indigo-200 transition-colors">
-                              <div className="flex items-center gap-3 min-w-0 flex-1">
-                                <div className="flex flex-col min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[10px] font-bold text-indigo-400 uppercase shrink-0">从</span>
-                                    <span className="text-xs font-mono text-slate-500 truncate" title={file.oldPath}>{file.oldPath}</span>
-                                  </div>
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <span className="text-[10px] font-bold text-indigo-600 uppercase shrink-0">到</span>
-                                    <span className="text-sm font-mono text-slate-700 font-bold truncate" title={file.newPath}>{file.newPath}</span>
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              <div className="flex items-center gap-4 ml-4">
-                                <span className="text-[11px] font-bold text-indigo-600 whitespace-nowrap">{formatSize(file.size)}</span>
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button
-                                    onClick={async () => {
-                                      const key = `${file.newPath}-confirm-rename`;
-                                      setSyncingPaths(prev => new Set(prev).add(key));
-                                      
-                                      // 1. 同步新文件到目标端 (source -> target)
-                                      const syncSuccess = await window.electronAPI.syncSingleFile(taskId, file.newPath, 'sourceToTarget');
-                                      if (syncSuccess) {
-                                        // 2. 删除目标端的旧文件 (target/oldPath)
-                                        await window.electronAPI.deleteFile(taskId, file.oldPath, 'target');
-                                        setResolvedPaths(prev => new Set(prev).add(file.oldPath).add(file.newPath));
-                                      }
-                                      
-                                      setSyncingPaths(prev => { const next = new Set(prev); next.delete(key); return next; });
-                                    }}
-                                    disabled={syncingPaths.has(`${file.newPath}-confirm-rename`)}
-                                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50"
-                                  >
-                                    {syncingPaths.has(`${file.newPath}-confirm-rename`) ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
-                                    确认重命名
-                                  </button>
-                                  <button
-                                    onClick={() => handleIgnore(file.newPath)}
-                                    className="p-1.5 bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 rounded-lg transition-colors"
-                                    title="忽略新路径"
-                                  >
-                                    <EyeOff size={14} />
                                   </button>
                                 </div>
                               </div>

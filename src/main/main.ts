@@ -547,43 +547,8 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
     diff.targetOnly.push({ path: relPath, size: tInfo.size, mtime: tInfo.mtime });
   }
 
-  // 重命名/移动检测：在 sourceOnly 和 targetOnly 之间寻找匹配项
-  // 匹配条件：大小完全一致 且 修改时间基本一致（误差 < 2秒）
-  const finalSourceOnly: any[] = [];
-  const sourceMatchedIndices = new Set<number>();
-  const targetMatchedIndices = new Set<number>();
-
-  // 方向：源端重命名 (Source-to-Target) 
-  // 表现：旧文件在 Source 消失（TargetOnly 留存），新文件在 Source 出现（SourceOnly 出现）
-  // 注意：逻辑上应是：如果 SourceOnly 的文件能在 TargetOnly 找到匹配，说明它是新文件，TargetOnly 的是旧文件。
-  diff.sourceOnly.forEach((sFile, sIdx) => {
-    const tIdx = diff.targetOnly.findIndex((tFile, idx) => 
-      !targetMatchedIndices.has(idx) && 
-      tFile.size === sFile.size && 
-      Math.abs(tFile.mtime - sFile.mtime) < 2000
-    );
-
-    if (tIdx !== -1) {
-      diff.renamed.push({
-        oldPath: diff.targetOnly[tIdx].path,
-        newPath: sFile.path,
-        size: sFile.size,
-        side: 'source' // 表示变动发生在源端，应同步到目标端
-      });
-      sourceMatchedIndices.add(sIdx);
-      targetMatchedIndices.add(tIdx);
-    } else {
-      finalSourceOnly.push(sFile);
-    }
-  });
-
-  // 处理剩余的 TargetOnly (可能存在目标端重命名的逻辑，虽然同步通常以一端为主，但双向同步需要支持)
-  // ... 此处暂以此逻辑为主，因为单文件同步是由用户触发方向的
-  
-  const finalTargetOnly = diff.targetOnly.filter((_, idx) => !targetMatchedIndices.has(idx));
-  
-  diff.sourceOnly = finalSourceOnly.map(f => ({ path: f.path, size: f.size }));
-  diff.targetOnly = finalTargetOnly.map(f => ({ path: f.path, size: f.size }));
+  diff.sourceOnly = diff.sourceOnly.map(f => ({ path: f.path, size: f.size }));
+  diff.targetOnly = diff.targetOnly.map(f => ({ path: f.path, size: f.size }));
 
   return diff;
 });
