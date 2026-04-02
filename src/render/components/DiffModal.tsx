@@ -139,6 +139,29 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
 
+  const handleConfirmAllRenamed = async (files: any[], sectionKey: string) => {
+    if (!await window.electronAPI.showConfirm(`确定要确认全部 ${files.length} 个重命名操作吗？`)) return;
+    setBatchSyncing(prev => new Set(prev).add(sectionKey));
+    for (const file of files) {
+      const success = await window.electronAPI.syncSingleFile(taskId, file.newPath, 'sourceToTarget');
+      if (success) {
+        await window.electronAPI.deleteFile(taskId, file.oldPath, 'target');
+        setResolvedPaths(prev => new Set(prev).add(file.oldPath).add(file.newPath));
+      }
+    }
+    setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
+  };
+
+  const handleIgnoreAll = async (files: { path: string }[], sectionKey: string) => {
+    if (!await window.electronAPI.showConfirm(`确定要忽略全部 ${files.length} 个文件吗？`)) return;
+    setBatchSyncing(prev => new Set(prev).add(sectionKey));
+    for (const file of files) {
+      const success = await window.electronAPI.ignorePath(taskId, file.path);
+      if (success) setResolvedPaths(prev => new Set(prev).add(file.path));
+    }
+    setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
+  };
+
   const MAX_DISPLAY = 1000;
   
   const activeDifferent = diffData?.different.filter(f => !resolvedPaths.has(f.path)) || [];
@@ -318,6 +341,32 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                             {collapsedSections.has('renamed') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
                           </span>
                         </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleConfirmAllRenamed(activeRenamed, 'renamedConfirm')}
+                            disabled={batchSyncing.has('renamedConfirm') || batchSyncing.has('renamedIgnore')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('renamedConfirm') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <CheckCircle2 size={12} />
+                            )}
+                            全部确认
+                          </button>
+                          <button
+                            onClick={() => handleIgnoreAll(activeRenamed.map(f => ({ path: f.newPath })), 'renamedIgnore')}
+                            disabled={batchSyncing.has('renamedConfirm') || batchSyncing.has('renamedIgnore')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-500 hover:bg-slate-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('renamedIgnore') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <EyeOff size={12} />
+                            )}
+                            全部忽略
+                          </button>
+                        </div>
                       </div>
                       {!collapsedSections.has('renamed') && (
                         <div className="space-y-2 animate-in slide-in-from-top-1 duration-200">
@@ -391,7 +440,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleSyncAll(activeSourceOnly, 'sourceToTarget', 'sourceOnly')}
-                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete')}
+                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete') || batchSyncing.has('sourceOnlyIgnore')}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
                           >
                             {batchSyncing.has('sourceOnly') ? (
@@ -402,8 +451,20 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                             全部同步到目标端
                           </button>
                           <button
+                            onClick={() => handleIgnoreAll(activeSourceOnly, 'sourceOnlyIgnore')}
+                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete') || batchSyncing.has('sourceOnlyIgnore')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-500 hover:bg-slate-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('sourceOnlyIgnore') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <EyeOff size={12} />
+                            )}
+                            全部忽略
+                          </button>
+                          <button
                             onClick={() => handleDeleteAll(activeSourceOnly, 'source', 'sourceOnlyDelete')}
-                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete')}
+                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete') || batchSyncing.has('sourceOnlyIgnore')}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
                           >
                             {batchSyncing.has('sourceOnlyDelete') ? (
@@ -480,7 +541,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleSyncAll(activeTargetOnly, 'targetToSource', 'targetOnly')}
-                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete')}
+                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete') || batchSyncing.has('targetOnlyIgnore')}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
                           >
                             {batchSyncing.has('targetOnly') ? (
@@ -491,8 +552,20 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                             全部同步到源端
                           </button>
                           <button
+                            onClick={() => handleIgnoreAll(activeTargetOnly, 'targetOnlyIgnore')}
+                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete') || batchSyncing.has('targetOnlyIgnore')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-500 hover:bg-slate-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('targetOnlyIgnore') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <EyeOff size={12} />
+                            )}
+                            全部忽略
+                          </button>
+                          <button
                             onClick={() => handleDeleteAll(activeTargetOnly, 'target', 'targetOnlyDelete')}
-                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete')}
+                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete') || batchSyncing.has('targetOnlyIgnore')}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
                           >
                             {batchSyncing.has('targetOnlyDelete') ? (

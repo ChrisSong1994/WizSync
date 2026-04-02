@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from "node:child_process";
-import { BrowserWindow } from "electron";
+import { BrowserWindow, app } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { SyncTask } from "./types";
@@ -21,6 +21,17 @@ export class SyncManager {
 
   private isManualSyncing: Map<string, boolean> = new Map();
   private resetDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
+
+  /**
+   * 获取任务在应用数据目录下的专用文件夹
+   */
+  private getTaskDataDir(taskId: string): string {
+    const baseDir = path.join(app.getPath("userData"), "task-data", taskId);
+    if (!fs.existsSync(baseDir)) {
+      fs.mkdirSync(baseDir, { recursive: true });
+    }
+    return baseDir;
+  }
 
   /**
    * 请求重置任务（带防抖，适用于批量手动操作后只重置一次）
@@ -126,11 +137,12 @@ export class SyncManager {
 
   private cleanUnisonArchives(task: SyncTask): Promise<void> {
     return new Promise((resolve) => {
-      const metadataDir = path.join(task.targetPath, ".wizsync", "unison");
+      const taskDataDir = this.getTaskDataDir(task.id);
+      const metadataDir = path.join(taskDataDir, "unison");
       try {
         if (fs.existsSync(metadataDir)) {
           fs.rmSync(metadataDir, { recursive: true, force: true });
-          logManager.write(task.id, `[清理] 已删除本地元数据目录: ${metadataDir}`);
+          logManager.write(task.id, `[清理] 已删除应用数据目录下的元数据: ${metadataDir}`);
         }
       } catch (err: any) {
         logManager.write(task.id, `[警告] 清理元数据目录失败: ${err.message}`);
@@ -328,8 +340,9 @@ export class SyncManager {
 
     const unisonPath = getUnisonPath();
     
-    // 关键：通过环境变量 UNISON 限制元数据存储在目标目录内，不修改外部文件
-    const metadataDir = path.join(task.targetPath, ".wizsync", "unison");
+    // 关键：将 Unison 元数据存储在应用数据目录下的任务专用文件夹中
+    const taskDataDir = this.getTaskDataDir(task.id);
+    const metadataDir = path.join(taskDataDir, "unison");
     if (!fs.existsSync(metadataDir)) {
       fs.mkdirSync(metadataDir, { recursive: true });
     }
