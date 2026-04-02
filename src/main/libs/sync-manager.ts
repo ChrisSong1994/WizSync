@@ -34,10 +34,10 @@ export class SyncManager {
     if (this.resetDebounceTimers.has(id)) {
       clearTimeout(this.resetDebounceTimers.get(id)!);
     }
-    
+
     const timer = setTimeout(async () => {
       const tasks = syncStore.getTasks();
-      const task = tasks.find(t => t.id === id);
+      const task = tasks.find((t) => t.id === id);
       if (task) {
         logManager.write(id, "[自动重置] 手动操作已完成，正在刷新引擎状态...");
         await this.resetTask(task);
@@ -53,7 +53,7 @@ export class SyncManager {
    */
   public async refreshStats(id: string) {
     const tasks = syncStore.getTasks();
-    const task = tasks.find(t => t.id === id);
+    const task = tasks.find((t) => t.id === id);
     if (task) {
       await this.refreshTaskStats(id, task.status);
     }
@@ -84,18 +84,18 @@ export class SyncManager {
     this.win = win;
     // 窗口就绪后初始化磁盘监控
     diskManager.init(
-      win, 
+      win,
       () => this.onStatusChange?.(),
       (taskId) => {
         const tasks = syncStore.getTasks();
-        const task = tasks.find(t => t.id === taskId);
+        const task = tasks.find((t) => t.id === taskId);
         if (task && (task.mode === "realtime" || task.mode === "scheduled")) {
           this.startTask(task);
         }
       },
       (taskId, side) => {
         this.handleDiskDisconnected(taskId, side);
-      }
+      },
     );
   }
 
@@ -106,25 +106,32 @@ export class SyncManager {
   /**
    * 处理磁盘断开连接
    */
-  private handleDiskDisconnected(taskId: string, side: "source" | "target" | "both") {
+  private handleDiskDisconnected(
+    taskId: string,
+    side: "source" | "target" | "both",
+  ) {
     const tasks = syncStore.getTasks();
-    const task = tasks.find(t => t.id === taskId);
+    const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
 
     // 停止任务
     this.stopTask(taskId);
-    
+
     // 更新状态为暂停
     this.updateStatus(taskId, "paused");
-    
+
     // 记录日志
-    const sideText = side === "source" ? "源端" : side === "target" ? "目标端" : "两端";
-    logManager.write(taskId, `[磁盘断开] ${sideText}磁盘已断开连接，任务已暂停`);
-    
+    const sideText =
+      side === "source" ? "源端" : side === "target" ? "目标端" : "两端";
+    logManager.write(
+      taskId,
+      `[磁盘断开] ${sideText}磁盘已断开连接，任务已暂停`,
+    );
+
     // 发送通知到前端
-    this.win?.webContents.send("sync-log", { 
-      id: taskId, 
-      log: `警告: ${sideText}磁盘已断开连接，任务已暂停` 
+    this.win?.webContents.send("sync-log", {
+      id: taskId,
+      log: `警告: ${sideText}磁盘已断开连接，任务已暂停`,
     });
   }
 
@@ -150,27 +157,38 @@ export class SyncManager {
   public async resetTask(task: SyncTask) {
     this.stopTask(task.id);
     logManager.write(task.id, "=== 强制重置同步缓存 (Archive) ===");
-    
+
     // 强制等待 1 秒让磁盘句柄释放
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
     await this.cleanUnisonArchives(task);
     logManager.write(task.id, "缓存清理完成，正在重新初始化同步...");
-    
+
     this.startTask(task);
   }
 
   private cleanUnisonArchives(task: SyncTask): Promise<void> {
     return new Promise((resolve) => {
       const unisonPath = getUnisonPath();
-      const proc = spawn(unisonPath, ["-showarchive", task.sourcePath, task.targetPath]);
+      const proc = spawn(unisonPath, [
+        "-showarchive",
+        task.sourcePath,
+        task.targetPath,
+      ]);
       let output = "";
 
       // 5 秒超时，防止进程挂死
-      const timer = setTimeout(() => { proc.kill(); resolve(); }, 5000);
+      const timer = setTimeout(() => {
+        proc.kill();
+        resolve();
+      }, 5000);
 
-      proc.stdout.on("data", (data) => { output += data.toString(); });
-      proc.stderr.on("data", (data) => { output += data.toString(); });
+      proc.stdout.on("data", (data) => {
+        output += data.toString();
+      });
+      proc.stderr.on("data", (data) => {
+        output += data.toString();
+      });
 
       proc.on("close", () => {
         clearTimeout(timer);
@@ -184,7 +202,10 @@ export class SyncManager {
         resolve();
       });
 
-      proc.on("error", () => { clearTimeout(timer); resolve(); });
+      proc.on("error", () => {
+        clearTimeout(timer);
+        resolve();
+      });
     });
   }
 
@@ -195,7 +216,9 @@ export class SyncManager {
     this.stopTask(task.id);
 
     if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
-      const offlinePath = !fs.existsSync(task.sourcePath) ? "源目录" : "目标目录";
+      const offlinePath = !fs.existsSync(task.sourcePath)
+        ? "源目录"
+        : "目标目录";
       const errorMsg = `启动失败：${offlinePath} 已离线。`;
       logManager.write(task.id, errorMsg);
       this.win?.webContents.send("sync-log", { id: task.id, log: errorMsg });
@@ -221,9 +244,11 @@ export class SyncManager {
     this.activeProcesses.delete(id);
 
     // PID fallback: kill by stored PID in case activeProcesses map was lost (e.g., after restart)
-    const storedTask = syncStore.getTasks().find(t => t.id === id);
+    const storedTask = syncStore.getTasks().find((t) => t.id === id);
     if (storedTask?.pid) {
-      try { process.kill(storedTask.pid); } catch {}
+      try {
+        process.kill(storedTask.pid);
+      } catch {}
       syncStore.updateTask(id, { pid: undefined });
     }
 
@@ -251,34 +276,42 @@ export class SyncManager {
   private setupRealtime(task: SyncTask) {
     const watcher = chokidar.watch([task.sourcePath, task.targetPath], {
       ignored: [
-        /(^|[/\\])\../,   // 所有隐藏文件和目录（以 . 开头）
+        /(^|[/\\])\../, // 所有隐藏文件和目录（以 . 开头）
         "**/node_modules/**",
         "**/desktop.ini",
-        "**/Thumbs.db"
+        "**/Thumbs.db",
       ],
       persistent: true,
       ignoreInitial: true,
-      awaitWriteFinish: { 
-        stabilityThreshold: 2000,
-        pollInterval: 200 
-      },
+      // 降低或移除 awaitWriteFinish，依靠下方的 debounceTimers (2000ms) 来确保写入完成
+      awaitWriteFinish: false,
     });
 
     watcher.on("all", (event, path) => {
-      // 如果是实时模式，Unison 已经通过 -repeat watch 自行处理同步了。
-      // 我们这里仅利用 Chokidar 来在文件变动后刷新 UI 统计信息（如最后同步时间、磁盘空间）。
-      if (task.mode === "realtime" && this.activeProcesses.has(task.id)) {
-        if (this.debounceTimers.has(task.id)) {
-          clearTimeout(this.debounceTimers.get(task.id)!);
-        }
-        const timer = setTimeout(() => {
-          this.refreshTaskStats(task.id, "syncing");
-        }, 3000); // 延迟 3 秒刷新，等待 Unison 完成写入
-        this.debounceTimers.set(task.id, timer);
-        return;
+      const isTargetEvent = path.startsWith(task.targetPath);
+      logManager.write(
+        task.id,
+        `[监听] 发现${isTargetEvent ? "目标端" : "源端"}变更: ${event} -> ${path}`,
+      );
+
+      // 如果是单向同步且变更发生在目标端，给出警告提示
+      if (
+        isTargetEvent &&
+        task.direction === "sourceToTarget" &&
+        (event === "add" || event === "addDir")
+      ) {
+        logManager.write(
+          task.id,
+          `[提示] 检测到目标端新增文件。由于当前是"源→目标"单向同步，该文件可能会被同步引擎移除。`,
+        );
       }
 
-      if (this.isCoolingDown.get(task.id) || this.activeProcesses.has(task.id) || this.isTaskManualSyncing(task.id)) {
+      // 不再依赖 Unison 内部监听模式 (-repeat watch)，而是统一通过 Chokidar 触发
+      if (
+        this.isCoolingDown.get(task.id) ||
+        this.activeProcesses.has(task.id) ||
+        this.isTaskManualSyncing(task.id)
+      ) {
         if (!this.isTaskManualSyncing(task.id)) {
           this.hasPendingSync.set(task.id, true);
         }
@@ -289,13 +322,17 @@ export class SyncManager {
         clearTimeout(this.debounceTimers.get(task.id)!);
       }
 
+      // 防抖触发同步，等待文件写入稳定
       const timer = setTimeout(() => {
-        if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
+        if (
+          !fs.existsSync(task.sourcePath) ||
+          !fs.existsSync(task.targetPath)
+        ) {
           this.handleOffline(task);
           return;
         }
         this.runUnison(task);
-      }, 1500);
+      }, 1000);
 
       this.debounceTimers.set(task.id, timer);
     });
@@ -313,7 +350,7 @@ export class SyncManager {
     logManager.write(task.id, errorMsg);
     this.win?.webContents.send("sync-log", { id: task.id, log: errorMsg });
     this.updateStatus(task.id, "error");
-    
+
     this.watchers.get(task.id)?.close();
     this.watchers.delete(task.id);
   }
@@ -342,35 +379,41 @@ export class SyncManager {
     }
 
     this.updateStatus(task.id, "syncing");
-    this.hasPendingSync.set(task.id, false); 
+    this.hasPendingSync.set(task.id, false);
 
     const args = [
       "-batch",
-      "-terse", 
+      "-terse",
       "-copyonconflict",
       "-ignoreinodenumbers",
       "-fat",
       "-dontchmod",
-      "-perms", "0",
+      "-perms",
+      "0",
       "-owner=false",
       "-group=false",
       "-xferbycopying",
       "-fastcheck=true",
-      "-ui", "text",
-      "-ignore", "Name .DS_Store",
-      "-ignore", "Name .*",
-      "-ignore", "Name node_modules",
-      "-ignore", "Name Thumbs.db",
-      "-ignore", "Name desktop.ini",
-      "-label", task.name,
+      "-ui",
+      "text",
+      "-ignore",
+      "Name .DS_Store",
+      "-ignore",
+      "Name .*",
+      "-ignore",
+      "Name node_modules",
+      "-ignore",
+      "Name Thumbs.db",
+      "-ignore",
+      "Name desktop.ini",
+      "-label",
+      task.name,
       "-ignorelocks",
-      "-retry", "3",
+      "-retry",
+      "3",
     ];
 
-    // 如果是实时模式，启用 Unison 内置的监听模式
-    if (task.mode === "realtime") {
-      args.push("-repeat", "watch");
-    }
+    // 不再使用 -repeat watch，因为改用 Chokidar 外部触发
 
     // 根据同步方向优化策略
     if (task.direction === "sourceToTarget") {
@@ -405,7 +448,7 @@ export class SyncManager {
 
     // 添加任务自定义忽略路径
     if (task.ignoredPaths && task.ignoredPaths.length > 0) {
-      task.ignoredPaths.forEach(p => {
+      task.ignoredPaths.forEach((p) => {
         args.push("-ignore", `Path ${p}`);
       });
     }
@@ -414,17 +457,17 @@ export class SyncManager {
     args.push(task.sourcePath);
     args.push(task.targetPath);
 
-    if (task.direction === "sourceToTarget") args.push("-force", task.sourcePath);
-    else if (task.direction === "targetToSource") args.push("-force", task.targetPath);
+    if (task.direction === "sourceToTarget")
+      args.push("-force", task.sourcePath);
+    else if (task.direction === "targetToSource")
+      args.push("-force", task.targetPath);
 
     const unisonPath = getUnisonPath();
     const binDir = getBinDir();
-    const monitorPath = path.join(binDir, "unison-fsmonitor");
 
     const proc = spawn(unisonPath, args, {
       env: {
         ...process.env,
-        UNISON_FSMONITOR: monitorPath,
         PATH: `${binDir}${path.delimiter}${process.env.PATH}`,
       },
     });
@@ -449,7 +492,10 @@ export class SyncManager {
     const flushBuffer = () => {
       if (outputBuffer) {
         logManager.write(task.id, outputBuffer);
-        this.win?.webContents.send("sync-log", { id: task.id, log: outputBuffer });
+        this.win?.webContents.send("sync-log", {
+          id: task.id,
+          log: outputBuffer,
+        });
         outputBuffer = "";
       }
     };
@@ -463,9 +509,9 @@ export class SyncManager {
         "connection lost",
         "fatal error",
         "lost connection",
-        "is being used by another process"
+        "is being used by another process",
       ];
-      if (retryPatterns.some(p => text.includes(p))) {
+      if (retryPatterns.some((p) => text.includes(p))) {
         needsRetry = true;
       }
     };
@@ -481,7 +527,10 @@ export class SyncManager {
       const errorMsg: string = data.toString();
       checkRetryNeeded(errorMsg);
       logManager.write(task.id, `[stderr] ${errorMsg}`);
-      this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${errorMsg}` });
+      this.win?.webContents.send("sync-log", {
+        id: task.id,
+        log: `警告: ${errorMsg}`,
+      });
     });
 
     proc.on("close", async (code) => {
@@ -495,12 +544,12 @@ export class SyncManager {
         this.win?.webContents.send("sync-log", { id: task.id, log: msg });
         setTimeout(() => {
           const tasks = syncStore.getTasks();
-          const currentTask = tasks.find(t => t.id === task.id);
+          const currentTask = tasks.find((t) => t.id === task.id);
           if (currentTask) this.runUnison(currentTask);
         }, 5000);
         return;
       }
-      
+
       const status = code === 0 ? "idle" : "error";
       await this.refreshTaskStats(task.id, status);
 
@@ -511,14 +560,14 @@ export class SyncManager {
         this.isCoolingDown.set(task.id, false);
         if (this.hasPendingSync.get(task.id)) {
           const tasks = syncStore.getTasks();
-          const currentTask = tasks.find(t => t.id === task.id);
+          const currentTask = tasks.find((t) => t.id === task.id);
           if (currentTask) {
             logManager.write(task.id, "检测到冷却期内的变更，正在追加同步...");
             this.runUnison(currentTask);
           }
         }
       }, 2000);
-      
+
       this.onStatusChange?.();
     });
   }
@@ -535,37 +584,37 @@ export class SyncManager {
    */
   private async refreshTaskStats(id: string, status: SyncTask["status"]) {
     const tasks = syncStore.getTasks();
-    const task = tasks.find(t => t.id === id);
+    const task = tasks.find((t) => t.id === id);
     if (!task) return;
 
     const lastSyncTime = new Date().toLocaleString();
-    
+
     if (fs.existsSync(task.sourcePath) && fs.existsSync(task.targetPath)) {
       const [sourceStats, targetStats] = await Promise.all([
         getDirStats(task.sourcePath),
-        getDirStats(task.targetPath)
+        getDirStats(task.targetPath),
       ]);
-      
+
       const sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
       const targetDisk = diskManager.getDiskSpace(task.targetPath) || undefined;
 
-      syncStore.updateTask(id, { 
-        status, 
-        lastSyncTime, 
-        sourceStats, 
+      syncStore.updateTask(id, {
+        status,
+        lastSyncTime,
+        sourceStats,
         targetStats,
         sourceDisk,
-        targetDisk
+        targetDisk,
       });
-      
-      this.win?.webContents.send("sync-status", { 
-        id, 
-        status, 
-        lastSyncTime, 
-        sourceStats, 
+
+      this.win?.webContents.send("sync-status", {
+        id,
+        status,
+        lastSyncTime,
+        sourceStats,
         targetStats,
         sourceDisk,
-        targetDisk
+        targetDisk,
       });
     } else {
       this.updateStatus(id, status);
