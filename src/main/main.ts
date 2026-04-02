@@ -283,31 +283,21 @@ ipcMain.handle(
         : path.join(task.sourcePath, filePath);
 
     try {
-      const destDir = path.dirname(dest);
-      if (!fs.existsSync(destDir)) {
-        fs.mkdirSync(destDir, { recursive: true });
-      }
-      
-      // 执行文件复制
-      fs.copyFileSync(src, dest);
-      
-      // 关键：复制源文件的访问时间和修改时间，确保对比逻辑一致
-      const stats = fs.statSync(src);
-      fs.utimesSync(dest, stats.atime, stats.mtime);
-      
+      // 交给 Unison 引擎处理单文件同步
       logManager.write(
         taskId,
-        `[手动同步] 已同步并保留时间戳: ${filePath} (${direction === "sourceToTarget" ? "源→目标" : "目标→源"})`,
+        `[手动同步] 正在通过引擎同步特定文件: ${filePath} (${direction === "sourceToTarget" ? "源→目标" : "目标→源"})`,
       );
+
+      syncManager.runSpecificPathSync(task, filePath, direction);
       return true;
     } catch (err: any) {
-      console.error("单文件同步失败:", err);
-      logManager.write(taskId, `[错误] 单文件同步失败: ${err.message}`);
+      console.error("单文件同步启动失败:", err);
+      logManager.write(taskId, `[错误] 单文件同步启动失败: ${err.message}`);
       return false;
     } finally {
-      // 释放手动同步标记并请求延迟重置
+      // 释放手动同步标记，无需 requestIncrementalSync，因为引擎会自动更新状态
       syncManager.setManualSyncing(taskId, false);
-      syncManager.requestReset(taskId);
     }
   },
 );
@@ -437,9 +427,9 @@ ipcMain.handle(
       logManager.write(taskId, `[错误] 删除文件失败: ${err.message}`);
       return false;
     } finally {
-      // 释放标记并请求延迟重置
+      // 释放标记并请求延迟增量同步
       syncManager.setManualSyncing(taskId, false);
-      syncManager.requestReset(taskId);
+      syncManager.requestIncrementalSync(taskId);
     }
   },
 );

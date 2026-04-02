@@ -270,7 +270,7 @@ export class SyncManager {
    * @param specificPaths 如果提供，则只同步这些特定的相对路径
    * @param overrideDirection 如果提供，则临时覆盖同步方向（用于单向同步）
    */
-  private async runUnison(task: SyncTask, specificPaths?: string[], overrideDirection?: "sourceToTarget" | "targetToSource", retryCount: number = 0) {
+  private async runUnison(task: SyncTask, specificPaths?: string[], overrideDirection?: "sourceToTarget" | "targetToSource") {
     if (this.activeProcesses.has(task.id)) return;
 
     if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
@@ -439,7 +439,7 @@ export class SyncManager {
       const chunk: string = data.toString();
 
       // 过滤掉我们不希望显示的冗余警告
-      if (chunk.includes("Destination updated during synchronization") || chunk.includes("Synchronization incomplete")) {
+      if (chunk.includes("Destination updated during synchronization")) {
         // 静默处理这个日志，只走内部的 needsRetry 逻辑
         checkStatus(chunk);
         return;
@@ -454,7 +454,7 @@ export class SyncManager {
       const errorMsg: string = data.toString();
 
       // 同样在 stderr 中过滤
-      if (errorMsg.includes("Destination updated during synchronization") || errorMsg.includes("Synchronization incomplete")) {
+      if (errorMsg.includes("Destination updated during synchronization")) {
         checkStatus(errorMsg);
         return;
       }
@@ -470,21 +470,13 @@ export class SyncManager {
       syncStore.updateTask(task.id, { pid: undefined });
 
       if (code !== 0 && needsRetry) {
-        if (retryCount >= 3) {
-          const msg = `[错误] 连续重试 ${retryCount} 次后仍然失败，已停止重试。请检查日志或手动处理。`;
-          logManager.write(task.id, msg);
-          this.win?.webContents.send("sync-log", { id: task.id, log: msg });
-          this.updateStatus(task.id, "error");
-          return;
-        }
-
-        const msg = `[自动重试] 增量同步准备就绪，1 秒后扫描以确认最终状态... (重试次数: ${retryCount + 1}/3)`;
+        const msg = `[自动重试] 增量同步准备就绪，1 秒后扫描以确认最终状态...`;
         logManager.write(task.id, msg);
         this.win?.webContents.send("sync-log", { id: task.id, log: msg });
         setTimeout(() => {
           const tasks = syncStore.getTasks();
           const currentTask = tasks.find(t => t.id === task.id);
-          if (currentTask) this.runUnison(currentTask, specificPaths, overrideDirection, retryCount + 1);
+          if (currentTask) this.runUnison(currentTask);
         }, 1000);
         return;
       }
