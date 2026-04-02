@@ -390,19 +390,23 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <button
                                     onClick={async () => {
-                                      const key = `${file.newPath}-sourceToTarget`;
+                                      const key = `${file.newPath}-confirm-rename`;
                                       setSyncingPaths(prev => new Set(prev).add(key));
-                                      const success = await window.electronAPI.syncSingleFile(taskId, file.newPath, 'sourceToTarget');
-                                      if (success) {
+                                      
+                                      // 1. 同步新文件到目标端 (source -> target)
+                                      const syncSuccess = await window.electronAPI.syncSingleFile(taskId, file.newPath, 'sourceToTarget');
+                                      if (syncSuccess) {
+                                        // 2. 删除目标端的旧文件 (target/oldPath)
                                         await window.electronAPI.deleteFile(taskId, file.oldPath, 'target');
                                         setResolvedPaths(prev => new Set(prev).add(file.oldPath).add(file.newPath));
                                       }
+                                      
                                       setSyncingPaths(prev => { const next = new Set(prev); next.delete(key); return next; });
                                     }}
-                                    disabled={syncingPaths.has(`${file.newPath}-sourceToTarget`)}
-                                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-lg transition-colors flex items-center gap-1"
+                                    disabled={syncingPaths.has(`${file.newPath}-confirm-rename`)}
+                                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50"
                                   >
-                                    {syncingPaths.has(`${file.newPath}-sourceToTarget`) ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                                    {syncingPaths.has(`${file.newPath}-confirm-rename`) ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
                                     确认重命名
                                   </button>
                                   <button
