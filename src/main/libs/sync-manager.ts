@@ -166,6 +166,42 @@ export class SyncManager {
     this.updateStatus(id, "idle");
   }
 
+  /**
+   * 强力停止所有任务（用于程序退出）
+   */
+  public async stopAllTasks() {
+    logManager.write("global", "正在清理所有同步进程...");
+    
+    // 收集所有活跃 PID
+    const pids = new Set<number>();
+    this.activeProcesses.forEach(p => { if (p.pid) pids.add(p.pid); });
+    syncStore.getTasks().forEach(t => { if (t.pid) pids.add(t.pid); });
+
+    // 1. 停止所有定时器
+    this.timers.forEach(timer => clearInterval(timer));
+    this.timers.clear();
+
+    // 2. 发送 SIGTERM 信号
+    pids.forEach(pid => {
+      try { process.kill(pid, "SIGTERM"); } catch {}
+    });
+
+    // 3. 等待 500ms 后检查并强制清理
+    await new Promise(resolve => setTimeout(resolve, 500));
+    pids.forEach(pid => {
+      try {
+        process.kill(pid, 0); // 检查进程是否存在
+        process.kill(pid, "SIGKILL"); // 强制杀死
+        console.log(`[清理] 强制终止残留进程: ${pid}`);
+      } catch {}
+    });
+
+    this.activeProcesses.clear();
+    syncStore.getTasks().forEach(t => {
+      if (t.pid) syncStore.updateTask(t.id, { pid: undefined, status: "idle" });
+    });
+  }
+
   private handleOffline(task: SyncTask) {
     const errorMsg = `同步挂起：检测到磁盘离线或路径失效。`;
     logManager.write(task.id, errorMsg);

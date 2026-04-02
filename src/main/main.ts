@@ -119,10 +119,18 @@ app.on("activate", () => {
   }
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", async (e) => {
+  if (isQuitting) return;
+  
+  // 拦截第一次退出事件以执行异步清理
+  e.preventDefault();
   isQuitting = true;
-  const tasks = syncStore.getTasks();
-  tasks.forEach((task) => syncManager.stopTask(task.id));
+  
+  console.log("正在执行退出前清理...");
+  await syncManager.stopAllTasks();
+  
+  // 清理完成后再次触发退出
+  app.quit();
 });
 
 app.whenReady().then(() => {
