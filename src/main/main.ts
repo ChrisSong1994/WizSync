@@ -25,42 +25,49 @@ process.env.APP_ROOT = APP_ROOT;
  */
 export function getBinDir(): string {
   const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
-  let binDir = path.join(app.getAppPath(), "src/resources/bin", arch);
-
-  if (binDir.includes("app.asar")) {
-    binDir = binDir.replace("app.asar", "app.asar.unpacked");
+  const relativePath = path.join("src/resources/bin", arch);
+  
+  if (app.isPackaged) {
+    // 生产环境下，asarUnpack 会将文件解压到 app.asar.unpacked 目录
+    return path.join(app.getAppPath() + ".unpacked", relativePath);
+  } else {
+    // 开发环境下
+    return path.join(app.getAppPath(), relativePath);
   }
-  return binDir;
 }
 
 /**
  * 获取 Unison 二进制文件的路径
  */
 export function getUnisonPath(): string {
-  if (process.platform !== "darwin") {
-    return "unison";
+  const binDir = getBinDir();
+  const unisonExe = process.platform === "win32" ? "unison.exe" : "unison";
+  const monitorExe = process.platform === "win32" ? "unison-fsmonitor.exe" : "unison-fsmonitor";
+  
+  const resourcePath = path.join(binDir, unisonExe);
+  const monitorPath = path.join(binDir, monitorExe);
+
+  // 确保二进制文件具有可执行权限 (仅限类 Unix 系统)
+  if (process.platform !== "win32") {
+    const fixPerms = (p: string) => {
+      try {
+        if (fs.existsSync(p)) {
+          const stats = fs.statSync(p);
+          if (!(stats.mode & 0o111)) {
+            fs.chmodSync(p, 0o755);
+          }
+        }
+      } catch (err) {
+        console.error(`修复权限失败: ${p}`, err);
+      }
+    };
+
+    fixPerms(resourcePath);
+    fixPerms(monitorPath);
   }
 
-  const binDir = getBinDir();
-  const resourcePath = path.join(binDir, "unison");
-  const monitorPath = path.join(binDir, "unison-fsmonitor");
-
-  // 确保二进制文件具有可执行权限
-  const fixPerms = (p: string) => {
-    try {
-      if (fs.existsSync(p)) {
-        const stats = fs.statSync(p);
-        if (!(stats.mode & 0o111)) {
-          fs.chmodSync(p, 0o755);
-        }
-      }
-    } catch (err) {
-      console.error(`修复权限失败: ${p}`, err);
-    }
-  };
-
-  fixPerms(resourcePath);
-  fixPerms(monitorPath);
+  // 导出环境变量供 Unison 引擎识别 (尤其是 monitor)
+  process.env.UNISON_FSMONITOR = monitorPath;
 
   return resourcePath;
 }

@@ -418,9 +418,12 @@ export class SyncManager {
 
     const unisonPath = getUnisonPath();
     const binDir = getBinDir();
+    const monitorPath = path.join(binDir, "unison-fsmonitor");
+
     const proc = spawn(unisonPath, args, {
       env: {
         ...process.env,
+        UNISON_FSMONITOR: monitorPath,
         PATH: `${binDir}${path.delimiter}${process.env.PATH}`,
       },
     });
