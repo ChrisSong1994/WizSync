@@ -13,7 +13,7 @@ export default defineConfig({
         vite: {
           build: {
             rollupOptions: {
-              external: ['chokidar', 'electron-store'],
+              external: ['electron-store'],
             },
           },
         },

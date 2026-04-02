@@ -123,6 +123,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </label>
             <div className="grid grid-cols-3 gap-2">
               {[
+                { id: "realtime", label: "实时监控", icon: Zap },
                 { id: "scheduled", label: "定时检查", icon: Clock },
                 { id: "manual", label: "手动执行", icon: Play },
               ].map((mode) => (

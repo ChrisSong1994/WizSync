@@ -1,5 +1,4 @@
 import { spawn, ChildProcess } from "node:child_process";
-import chokidar from "chokidar";
 import { BrowserWindow } from "electron";
 import fs from "node:fs";
 import { SyncTask } from "./types";
@@ -11,18 +10,14 @@ import { logManager } from "./logs";
 
 /**
  * 同步管理器类 (SyncManager)
- * 核心：调度 Unison 进程 + 文件监听 + 异常处理
+ * 核心：调度 Unison 进程 + 定时检查 + 异常处理
  */
 export class SyncManager {
   private activeProcesses: Map<string, ChildProcess> = new Map();
-  private watchers: Map<string, chokidar.FSWatcher> = new Map();
   private timers: Map<string, NodeJS.Timeout> = new Map();
-  private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private win: BrowserWindow | null = null;
   private onStatusChange: (() => void) | null = null;
 
-  private isCoolingDown: Map<string, boolean> = new Map();
-  private hasPendingSync: Map<string, boolean> = new Map();
   private isManualSyncing: Map<string, boolean> = new Map();
   private resetDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
 
@@ -87,7 +82,7 @@ export class SyncManager {
   }
 
   /**
-   * 删除任务：停止进程+监听，archive 清理异步后台执行不阻塞
+   * 删除任务：停止进程+清理缓存
    */
   deleteTask(task: SyncTask) {
     this.stopTask(task.id);
@@ -156,9 +151,7 @@ export class SyncManager {
     logManager.write(task.id, `=== 任务启动 [模式: ${task.mode}] ===`);
     this.runUnison(task);
 
-    if (task.mode === "realtime") {
-      this.setupRealtime(task);
-    } else if (task.mode === "scheduled") {
+    if (task.mode === "scheduled") {
       this.setupScheduled(task);
     }
   }
@@ -170,79 +163,19 @@ export class SyncManager {
     this.activeProcesses.get(id)?.kill();
     this.activeProcesses.delete(id);
 
-    // PID fallback: kill by stored PID in case activeProcesses map was lost (e.g., after restart)
+    // PID fallback: kill by stored PID in case activeProcesses map was lost
     const storedTask = syncStore.getTasks().find(t => t.id === id);
     if (storedTask?.pid) {
       try { process.kill(storedTask.pid); } catch {}
       syncStore.updateTask(id, { pid: undefined });
     }
 
-    this.watchers.get(id)?.close();
-    this.watchers.delete(id);
-
     if (this.timers.has(id)) {
       clearInterval(this.timers.get(id)!);
       this.timers.delete(id);
     }
 
-    if (this.debounceTimers.has(id)) {
-      clearTimeout(this.debounceTimers.get(id)!);
-      this.debounceTimers.delete(id);
-    }
-
-    this.isCoolingDown.delete(id);
-    this.hasPendingSync.delete(id);
     this.updateStatus(id, "idle");
-  }
-
-  /**
-   * 配置实时监听
-   */
-  private setupRealtime(task: SyncTask) {
-    const watcher = chokidar.watch([task.sourcePath, task.targetPath], {
-      ignored: [
-        /(^|[/\\])\../,   // 所有隐藏文件和目录（以 . 开头）
-        "**/node_modules/**",
-        "**/desktop.ini",
-        "**/Thumbs.db"
-      ],
-      persistent: true,
-      ignoreInitial: true,
-      awaitWriteFinish: { 
-        stabilityThreshold: 2000,
-        pollInterval: 200 
-      },
-    });
-
-    watcher.on("all", (event, path) => {
-      if (this.isCoolingDown.get(task.id) || this.activeProcesses.has(task.id) || this.isTaskManualSyncing(task.id)) {
-        if (!this.isTaskManualSyncing(task.id)) {
-          this.hasPendingSync.set(task.id, true);
-        }
-        return;
-      }
-
-      if (this.debounceTimers.has(task.id)) {
-        clearTimeout(this.debounceTimers.get(task.id)!);
-      }
-
-      const timer = setTimeout(() => {
-        if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
-          this.handleOffline(task);
-          return;
-        }
-        this.runUnison(task);
-      }, 1500);
-
-      this.debounceTimers.set(task.id, timer);
-    });
-
-    watcher.on("error", (error) => {
-      console.error(`[Watcher Error] ${task.name}:`, error);
-      this.handleOffline(task);
-    });
-
-    this.watchers.set(task.id, watcher);
   }
 
   private handleOffline(task: SyncTask) {
@@ -251,8 +184,11 @@ export class SyncManager {
     this.win?.webContents.send("sync-log", { id: task.id, log: errorMsg });
     this.updateStatus(task.id, "error");
     
-    this.watchers.get(task.id)?.close();
-    this.watchers.delete(task.id);
+    // 如果是定时任务，发生离线时停止定时器
+    if (this.timers.has(task.id)) {
+      clearInterval(this.timers.get(task.id)!);
+      this.timers.delete(task.id);
+    }
   }
 
   private setupScheduled(task: SyncTask) {
@@ -279,7 +215,6 @@ export class SyncManager {
     }
 
     this.updateStatus(task.id, "syncing");
-    this.hasPendingSync.set(task.id, false); 
 
     const args = [
       "-batch",
@@ -301,6 +236,7 @@ export class SyncManager {
       "-label", task.name,
       "-ignorelocks",
       "-retry", "3",
+      "-confirmbigdel=false", // 自动确认大批量删除，防止挂起
     ];
 
     // 根据同步方向优化策略
@@ -456,20 +392,6 @@ export class SyncManager {
       }
 
       logManager.write(task.id, `同步结束 (代码: ${code})`);
-
-      this.isCoolingDown.set(task.id, true);
-      setTimeout(() => {
-        this.isCoolingDown.set(task.id, false);
-        if (this.hasPendingSync.get(task.id)) {
-          const tasks = syncStore.getTasks();
-          const currentTask = tasks.find(t => t.id === task.id);
-          if (currentTask) {
-            logManager.write(task.id, "检测到冷却期内的变更，正在追加同步...");
-            this.runUnison(currentTask);
-          }
-        }
-      }, 2000);
-      
       this.onStatusChange?.();
     });
   }

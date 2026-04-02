@@ -10,7 +10,6 @@
     "build": "tsc && vite build && electron-builder"
   },
   "dependencies": {
-    "chokidar": "^3.5.3",
     "clsx": "^2.1.0",
     "electron-store": "^8.1.0",
     "lucide-react": "^0.363.0",

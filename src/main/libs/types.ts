@@ -3,7 +3,7 @@ export interface SyncTask {
   name: string;
   sourcePath: string;
   targetPath: string;
-  mode: "realtime" | "scheduled" | "manual";
+  mode: "scheduled" | "manual";
   interval?: number; // 单位：分钟
   direction: "bidirectional" | "sourceToTarget" | "targetToSource";
   status: "idle" | "syncing" | "error";

@@ -108,16 +108,12 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             <span
               className={cn(
                 "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
-                task.mode === "realtime"
-                  ? "bg-purple-100 text-purple-700"
-                  : task.mode === "scheduled"
+                task.mode === "scheduled"
                     ? "bg-blue-100 text-blue-700"
                     : "bg-slate-100 text-slate-700",
               )}
             >
-              {task.mode === "realtime"
-                ? "实时监听"
-                : task.mode === "scheduled"
+              {task.mode === "scheduled"
                   ? `定时 (${task.interval}min)`
                   : "手动同步"}
             </span>

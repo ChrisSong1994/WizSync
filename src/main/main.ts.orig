@@ -155,7 +155,7 @@ app.whenReady().then(() => {
     });
 
     tasks.forEach((task) => {
-      if (task.mode === "scheduled") {
+      if (task.mode === "realtime" || task.mode === "scheduled") {
         syncManager.startTask(task);
       }
     });
@@ -256,7 +256,7 @@ ipcMain.handle(
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return false;
 
-    // 标记正在手动同步，防止触发 Unison 冲突
+    // 标记正在手动同步，防止 Chokidar 触发 Unison 冲突
     syncManager.setManualSyncing(taskId, true);
 
     const src =
