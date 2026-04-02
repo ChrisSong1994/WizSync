@@ -481,6 +481,7 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
     sourceOnly: [] as any[],
     targetOnly: [] as any[],
     different: [] as any[],
+    renamed: [] as any[],
     ignored: [] as any[],
   };
 
@@ -493,7 +494,7 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
 
     const tInfo = targetFiles.get(relPath);
     if (!tInfo) {
-      diff.sourceOnly.push({ path: relPath, size: sInfo.size });
+      diff.sourceOnly.push({ path: relPath, size: sInfo.size, mtime: sInfo.mtime });
     } else if (
       sInfo.size !== tInfo.size ||
       Math.abs(sInfo.mtime - tInfo.mtime) > 2000
@@ -521,8 +522,40 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
       continue;
     }
     
-    diff.targetOnly.push({ path: relPath, size: tInfo.size });
+    diff.targetOnly.push({ path: relPath, size: tInfo.size, mtime: tInfo.mtime });
   }
+
+  // 重命名/移动检测：在 sourceOnly 和 targetOnly 之间寻找匹配项
+  // 匹配条件：大小完全一致 且 修改时间基本一致（误差 < 2秒）
+  const finalSourceOnly: any[] = [];
+  const sourceMatchedIndices = new Set<number>();
+  const targetMatchedIndices = new Set<number>();
+
+  diff.sourceOnly.forEach((sFile, sIdx) => {
+    const tIdx = diff.targetOnly.findIndex((tFile, idx) => 
+      !targetMatchedIndices.has(idx) && 
+      tFile.size === sFile.size && 
+      Math.abs(tFile.mtime - sFile.mtime) < 2000
+    );
+
+    if (tIdx !== -1) {
+      diff.renamed.push({
+        oldPath: sFile.path,
+        newPath: diff.targetOnly[tIdx].path,
+        size: sFile.size,
+        side: 'sourceToTarget'
+      });
+      sourceMatchedIndices.add(sIdx);
+      targetMatchedIndices.add(tIdx);
+    } else {
+      finalSourceOnly.push(sFile);
+    }
+  });
+
+  const finalTargetOnly = diff.targetOnly.filter((_, idx) => !targetMatchedIndices.has(idx));
+  
+  diff.sourceOnly = finalSourceOnly.map(f => ({ path: f.path, size: f.size }));
+  diff.targetOnly = finalTargetOnly.map(f => ({ path: f.path, size: f.size }));
 
   return diff;
 });

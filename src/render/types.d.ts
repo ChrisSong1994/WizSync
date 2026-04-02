@@ -30,6 +30,7 @@ export interface DiffResult {
   sourceOnly: { path: string; size: number }[]
   targetOnly: { path: string; size: number }[]
   different: { path: string; sourceSize: number; targetSize: number; sourceMtime: number; targetMtime: number }[]
+  renamed: { oldPath: string; newPath: string; size: number; side: 'sourceToTarget' | 'targetToSource' }[]
   ignored: { path: string; size: number; side: 'source' | 'target' | 'both' }[]
 }
 
