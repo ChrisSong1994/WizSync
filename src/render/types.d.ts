@@ -11,8 +11,8 @@ export interface SyncTask {
   useParallel?: boolean
   sourceStats?: { size: number; count: number }
   targetStats?: { size: number; count: number }
-  sourceDisk?: { total: number; free: number }
-  targetDisk?: { total: number; free: number }
+  sourceDisk?: { name: string; total: number; free: number }
+  targetDisk?: { name: string; total: number; free: number }
   ignoredPaths?: string[]
   backupPath?: string
   pid?: number

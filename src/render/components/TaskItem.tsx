@@ -59,13 +59,23 @@ export const TaskItem: React.FC<TaskItemProps> = ({
 
   const handleDeleteClick = async () => {
     setShowMenu(false);
-    if (!await window.electronAPI.showConfirm(`确定要删除任务「${task.name}」吗？\n此操作将停止同步并清理相关进程。`)) return;
+    if (
+      !(await window.electronAPI.showConfirm(
+        `确定要删除任务「${task.name}」吗？\n此操作将停止同步并清理相关进程。`,
+      ))
+    )
+      return;
     setDeleting(true);
     await onDeleteTask(task.id);
   };
 
   const handleReset = async () => {
-    if (!await window.electronAPI.showConfirm(`确定要强制重置任务「${task.name}」吗？\n这将清理同步缓存并重新扫描所有文件，通常用于解决顽固报错。`)) return;
+    if (
+      !(await window.electronAPI.showConfirm(
+        `确定要强制重置任务「${task.name}」吗？\n这将清理同步缓存并重新扫描所有文件，通常用于解决顽固报错。`,
+      ))
+    )
+      return;
     setResetting(true);
     try {
       await window.electronAPI.resetSync(task.id);
@@ -109,20 +119,25 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               className={cn(
                 "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
                 task.mode === "scheduled"
-                    ? "bg-blue-100 text-blue-700"
-                    : "bg-slate-100 text-slate-700",
+                  ? "bg-blue-100 text-blue-700"
+                  : "bg-slate-100 text-slate-700",
               )}
             >
               {task.mode === "scheduled"
-                  ? `定时 (${task.interval}min)`
-                  : "手动同步"}
+                ? `定时 (${task.interval}min)`
+                : "手动同步"}
             </span>
           </div>
           <div className="flex items-center gap-3 text-sm text-slate-500">
             <div className="flex flex-col">
+              {task.sourceDisk?.name && (
+                <span className="text-[10px] font-black text-blue-600 ml-1 mb-0.5 uppercase tracking-tighter">
+                  {task.sourceDisk.name}
+                </span>
+              )}
               <div className="flex items-center gap-1 group/path">
-                <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
-                  {task.sourcePath.split("/").pop()}
+                <span className="truncate max-w-[200px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100 text-slate-700 font-bold">
+                  {task.sourcePath.split("/").filter(Boolean).pop() || "/"}
                 </span>
                 <button
                   onClick={() => handleReveal("source")}
@@ -135,80 +150,90 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               <div className="flex flex-col mt-0.5 ml-1">
                 {task.sourceStats && (
                   <span className="text-[11px] text-slate-500">
-                    {formatSize(task.sourceStats.size)} · {task.sourceStats.count} 文件
+                    {formatSize(task.sourceStats.size)} ·{" "}
+                    {task.sourceStats.count} 文件
                   </span>
                 )}
                 {task.sourceDisk ? (
                   <span className="text-[10px] text-slate-500">
                     磁盘:{" "}
-                    <span className={cn(
-                      task.sourceDisk.free < 200 * 1024 * 1024 
-                        ? "text-red-500 font-bold" 
-                        : task.sourceDisk.free < 1024 * 1024 * 1024 
-                          ? "text-amber-500 font-bold" 
-                          : "text-slate-500"
-                    )}>
+                    <span
+                      className={cn(
+                        task.sourceDisk.free < 200 * 1024 * 1024
+                          ? "text-red-500 font-bold"
+                          : task.sourceDisk.free < 1024 * 1024 * 1024
+                            ? "text-amber-500 font-bold"
+                            : "text-slate-500",
+                      )}
+                    >
                       {formatSize(task.sourceDisk.free)} 剩余
-                    </span>
-                    {" "}/ {formatSize(task.sourceDisk.total)}
+                    </span>{" "}
+                    / {formatSize(task.sourceDisk.total)}
                   </span>
                 ) : (
                   <span className="text-[10px] text-red-500 font-bold">
                     磁盘未连接
                   </span>
                 )}
-                </div>
-                </div>
-
-                {task.direction === "bidirectional" ? (
-                <ArrowLeftRight
+              </div>
+            </div>
+            {task.direction === "bidirectional" ? (
+              <ArrowLeftRight
                 size={14}
-                className="text-slate-500 flex-shrink-0"
-                />
-                ) : (
-                <ArrowRight size={14} className="text-slate-500 flex-shrink-0" />
-                )}
-
-                <div className="flex flex-col">
-                <div className="flex items-center gap-1 group/path">
-                  <span className="truncate max-w-[180px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
-                    {task.targetPath.split("/").pop()}
-                  </span>
-                  <button
-                    onClick={() => handleReveal("target")}
-                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
-                    title="在访达/资源管理器中定位"
-                  >
-                    <MapPin size={12} />
-                  </button>
-                </div>
-                <div className="flex flex-col mt-0.5 ml-1">
+                className="text-slate-500 flex-shrink-0 mt-3"
+              />
+            ) : (
+              <ArrowRight size={14} className="text-slate-500 flex-shrink-0 mt-3" />
+            )}
+            <div className="flex flex-col">
+              {task.targetDisk?.name && (
+                <span className="text-[10px] font-black text-blue-600 ml-1 mb-0.5 uppercase tracking-tighter">
+                  {task.targetDisk.name}
+                </span>
+              )}
+              <div className="flex items-center gap-1 group/path">
+                <span className="truncate max-w-[200px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100 text-slate-700 font-bold">
+                  {task.targetPath.split("/").filter(Boolean).pop() || "/"}
+                </span>
+                <button
+                  onClick={() => handleReveal("target")}
+                  className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
+                  title="在访达/资源管理器中定位"
+                >
+                  <MapPin size={12} />
+                </button>
+              </div>
+              <div className="flex flex-col mt-0.5 ml-1">
                 {task.targetStats && (
                   <span className="text-[11px] text-slate-500">
-                    {formatSize(task.targetStats.size)} · {task.targetStats.count} 文件
+                    {formatSize(task.targetStats.size)} ·{" "}
+                    {task.targetStats.count} 文件
                   </span>
                 )}
                 {task.targetDisk ? (
                   <span className="text-[10px] text-slate-500">
                     磁盘:{" "}
-                    <span className={cn(
-                      task.targetDisk.free < 200 * 1024 * 1024 
-                        ? "text-red-500 font-bold" 
-                        : task.targetDisk.free < 1024 * 1024 * 1024 
-                          ? "text-amber-500 font-bold" 
-                          : "text-slate-500"
-                    )}>
+                    <span
+                      className={cn(
+                        task.targetDisk.free < 200 * 1024 * 1024
+                          ? "text-red-500 font-bold"
+                          : task.targetDisk.free < 1024 * 1024 * 1024
+                            ? "text-amber-500 font-bold"
+                            : "text-slate-500",
+                      )}
+                    >
                       {formatSize(task.targetDisk.free)} 剩余
-                    </span>
-                    {" "}/ {formatSize(task.targetDisk.total)}
+                    </span>{" "}
+                    / {formatSize(task.targetDisk.total)}
                   </span>
                 ) : (
                   <span className="text-[10px] text-red-500 font-bold">
                     磁盘未连接
                   </span>
                 )}
-                </div>
-                </div>          </div>
+              </div>
+            </div>{" "}
+          </div>
         </div>
 
         {/* 操作按钮 */}
@@ -220,9 +245,11 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
               task.status === "syncing"
                 ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                : "bg-slate-50 text-slate-600 hover:bg-slate-100",
             )}
-            title={task.status === "syncing" ? "同步进行中，无法对比" : "对比差异"}
+            title={
+              task.status === "syncing" ? "同步进行中，无法对比" : "对比差异"
+            }
           >
             <FileSearch size={20} />
           </button>
@@ -240,11 +267,15 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
               task.status === "syncing" || resetting
                 ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+                : "bg-amber-50 text-amber-600 hover:bg-amber-100",
             )}
             title="强制重置 (解决顽固报错)"
           >
-            {resetting ? <Loader2 size={18} className="animate-spin" /> : <RotateCcw size={20} />}
+            {resetting ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <RotateCcw size={20} />
+            )}
           </button>
           <button
             onClick={() => onToggleSync(task)}
@@ -276,11 +307,15 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
               deleting
                 ? "bg-red-100 text-red-400 cursor-not-allowed"
-                : "bg-red-50 text-red-600 hover:bg-red-100"
+                : "bg-red-50 text-red-600 hover:bg-red-100",
             )}
             title="删除任务"
           >
-            {deleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={20} />}
+            {deleting ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <Trash2 size={20} />
+            )}
           </button>
         </div>
       </div>
