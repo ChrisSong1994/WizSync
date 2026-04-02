@@ -24,10 +24,6 @@ process.env.APP_ROOT = APP_ROOT;
  * 获取 Unison 二进制文件的路径
  */
 export function getUnisonPath(): string {
-  if (process.platform !== "darwin") {
-    return "unison";
-  }
-
   const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
 
   // 使用 app.getAppPath() 获取应用根目录

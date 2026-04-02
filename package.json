@@ -39,12 +39,6 @@
         "dmg",
         "zip"
       ]
-    },
-    "win": {
-      "icon": "public/assets/icon-512.png",
-      "target": [
-        "nsis"
-      ]
     }
   },
   "devDependencies": {
