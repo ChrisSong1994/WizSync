@@ -378,7 +378,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                                 >
                                   <MapPin size={14} />
                                 </button>
-                                <span className="text-sm font-mono text-slate-700 truncate max-w-md">{file.path}</span>
+                                <span className="text-sm font-mono text-slate-700 truncate max-w-md" title={file.path}>{file.path}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-[11px] font-bold text-blue-600 mr-2">{formatSize(file.size)}</span>
@@ -479,7 +479,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                                 >
                                   <MapPin size={14} />
                                 </button>
-                                <span className="text-sm font-mono text-slate-700 truncate max-w-md">{file.path}</span>
+                                <span className="text-sm font-mono text-slate-700 truncate max-w-md" title={file.path}>{file.path}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-[11px] font-bold text-emerald-600 mr-2">{formatSize(file.size)}</span>
@@ -532,7 +532,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         <div className="space-y-2">
                           {diffData.ignored.filter(f => !unignoredPaths.has(f.path)).map((file, i) => (
                             <div key={i} className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex items-center justify-between group hover:border-slate-200 transition-colors">
-                              <span className="text-sm font-mono text-slate-500 truncate max-w-md opacity-60">{file.path}</span>
+                              <span className="text-sm font-mono text-slate-500 truncate max-w-md opacity-60" title={file.path}>{file.path}</span>
                               <div className="flex items-center gap-3">
                                 <span className="text-[10px] text-slate-400 font-bold uppercase opacity-60">
                                   {file.side === 'both' ? '双端存在' : file.side === 'source' ? '仅源端' : '仅目标端'}

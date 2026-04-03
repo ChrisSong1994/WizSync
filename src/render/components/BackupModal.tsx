@@ -100,7 +100,7 @@ const TreeItem: React.FC<TreeItemProps> = ({ node, depth, onDelete, onReveal }) 
     >
       <div className="flex items-center gap-2 min-w-0">
         <FileIcon size={14} className="text-slate-300 flex-shrink-0" />
-        <span className="text-sm text-slate-700 truncate" title={node.relativePath}>
+        <span className="text-sm text-slate-700 truncate" title={node.fullPath}>
           {node.name}
         </span>
       </div>
