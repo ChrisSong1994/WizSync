@@ -383,6 +383,17 @@ export class SyncManager {
       UNISON: metadataDir 
     };
 
+    // 在真正启动进程前再次确认两个根目录均存在，防止磁盘在构建参数期间被卸载
+    // Unison 在根目录不存在时会自动创建，这里严禁这种行为
+    if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
+      const missing = !fs.existsSync(task.sourcePath) ? task.sourcePath : task.targetPath;
+      const errMsg = `同步中止：根目录不存在，拒绝启动 Unison（禁止自动创建根目录）: ${missing}`;
+      console.warn(errMsg);
+      logManager.write(task.id, `[中止] ${errMsg}`);
+      this.updateStatus(task.id, "error");
+      return;
+    }
+
     const proc = spawn(unisonPath, args, { env });
     this.activeProcesses.set(task.id, proc);
 
