@@ -278,6 +278,17 @@ export class SyncManager {
       return;
     }
 
+    // 检测路径嵌套：防止一个路径是另一个的父目录，否则 Unison 会在同步时递归创建同名目录
+    const srcNorm = task.sourcePath.endsWith(path.sep) ? task.sourcePath : task.sourcePath + path.sep;
+    const tgtNorm = task.targetPath.endsWith(path.sep) ? task.targetPath : task.targetPath + path.sep;
+    if (srcNorm.startsWith(tgtNorm) || tgtNorm.startsWith(srcNorm)) {
+      const errMsg = `路径配置错误：源目录与目标目录存在嵌套关系，这会导致同步时递归创建同名目录。请检查任务配置。\n源: ${task.sourcePath}\n目标: ${task.targetPath}`;
+      console.error(errMsg);
+      logManager.write(task.id, `[错误] ${errMsg}`);
+      this.updateStatus(task.id, "error");
+      return;
+    }
+
     this.updateStatus(task.id, "syncing");
 
     const args = [
