@@ -278,11 +278,29 @@ export class SyncManager {
       return;
     }
 
-    // 检测路径嵌套：防止一个路径是另一个的父目录，否则 Unison 会在同步时递归创建同名目录
-    const srcNorm = task.sourcePath.endsWith(path.sep) ? task.sourcePath : task.sourcePath + path.sep;
-    const tgtNorm = task.targetPath.endsWith(path.sep) ? task.targetPath : task.targetPath + path.sep;
+    // 检测路径冲突：解析 symlink 后再比较，防止以下两种危险情况：
+    // 1. 两条路径经 symlink 指向同一真实目录 → Unison 自己同步自己，数据损坏
+    // 2. symlink 绕过字符串比较，实际存在父子嵌套 → 递归创建同名目录
+    let srcReal: string, tgtReal: string;
+    try {
+      srcReal = fs.realpathSync(task.sourcePath);
+      tgtReal = fs.realpathSync(task.targetPath);
+    } catch {
+      // realpathSync 失败说明路径无法解析（断链 symlink 等），当作离线处理
+      this.handleOffline(task);
+      return;
+    }
+    if (srcReal === tgtReal) {
+      const errMsg = `路径配置错误：源目录与目标目录解析后指向同一真实路径，拒绝同步。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
+      console.error(errMsg);
+      logManager.write(task.id, `[错误] ${errMsg}`);
+      this.updateStatus(task.id, "error");
+      return;
+    }
+    const srcNorm = srcReal.endsWith(path.sep) ? srcReal : srcReal + path.sep;
+    const tgtNorm = tgtReal.endsWith(path.sep) ? tgtReal : tgtReal + path.sep;
     if (srcNorm.startsWith(tgtNorm) || tgtNorm.startsWith(srcNorm)) {
-      const errMsg = `路径配置错误：源目录与目标目录存在嵌套关系，这会导致同步时递归创建同名目录。请检查任务配置。\n源: ${task.sourcePath}\n目标: ${task.targetPath}`;
+      const errMsg = `路径配置错误：源目录与目标目录存在嵌套关系（含 symlink 解析后），这会导致同步时递归创建同名目录。请检查任务配置。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
       console.error(errMsg);
       logManager.write(task.id, `[错误] ${errMsg}`);
       this.updateStatus(task.id, "error");
