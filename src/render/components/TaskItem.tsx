@@ -240,15 +240,19 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={() => onCompare(task.id)}
-            disabled={task.status === "syncing"}
+            disabled={task.status === "syncing" || (!task.sourceDisk || !task.targetDisk)}
             className={cn(
               "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-              task.status === "syncing"
+              task.status === "syncing" || (!task.sourceDisk || !task.targetDisk)
                 ? "bg-slate-50 text-slate-300 cursor-not-allowed"
                 : "bg-slate-50 text-slate-600 hover:bg-slate-100",
             )}
             title={
-              task.status === "syncing" ? "同步进行中，无法对比" : "对比差异"
+              task.status === "syncing"
+                ? "同步进行中，无法对比"
+                : (!task.sourceDisk || !task.targetDisk)
+                  ? "磁盘未连接，无法对比"
+                  : "对比差异"
             }
           >
             <FileSearch size={20} />
@@ -262,14 +266,18 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           </button>
           <button
             onClick={handleReset}
-            disabled={task.status === "syncing" || resetting}
+            disabled={task.status === "syncing" || resetting || (!task.sourceDisk || !task.targetDisk)}
             className={cn(
               "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-              task.status === "syncing" || resetting
+              task.status === "syncing" || resetting || (!task.sourceDisk || !task.targetDisk)
                 ? "bg-slate-50 text-slate-300 cursor-not-allowed"
                 : "bg-amber-50 text-amber-600 hover:bg-amber-100",
             )}
-            title="强制重置 (解决顽固报错)"
+            title={
+              (!task.sourceDisk || !task.targetDisk)
+                ? "磁盘未连接，无法重置"
+                : "强制重置 (解决顽固报错)"
+            }
           >
             {resetting ? (
               <Loader2 size={18} className="animate-spin" />
@@ -279,13 +287,22 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           </button>
           <button
             onClick={() => onToggleSync(task)}
+            disabled={(!task.sourceDisk || !task.targetDisk) && task.status !== "syncing"}
             className={cn(
               "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-              task.status === "syncing"
-                ? "bg-amber-100 text-amber-600 hover:bg-amber-200"
-                : "bg-blue-50 text-blue-600 hover:bg-blue-100",
+              ((!task.sourceDisk || !task.targetDisk) && task.status !== "syncing")
+                ? "bg-slate-50 text-slate-300 cursor-not-allowed"
+                : task.status === "syncing"
+                  ? "bg-amber-100 text-amber-600 hover:bg-amber-200"
+                  : "bg-blue-50 text-blue-600 hover:bg-blue-100",
             )}
-            title={task.status === "syncing" ? "停止同步" : "开始同步"}
+            title={
+              task.status === "syncing"
+                ? "停止同步"
+                : (!task.sourceDisk || !task.targetDisk)
+                  ? "磁盘未连接，无法同步"
+                  : "开始同步"
+            }
           >
             {task.status === "syncing" ? (
               <StopCircle size={22} />
