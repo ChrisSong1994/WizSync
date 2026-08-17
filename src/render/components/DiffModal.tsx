@@ -83,7 +83,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   };
 
   const handleDelete = async (filePath: string, side: 'source' | 'target') => {
-    if (!await window.electronAPI.showConfirm(`确定要删除${side === 'source' ? '源目录' : '目标目录'}中的文件吗？\n${filePath}`)) return;
+    if (!await window.electronAPI.showConfirm(`确定要删除${side === 'source' ? '源目录' : '目标目录'}中的文件吗？\n${filePath}\n\n文件将移入系统废纸篓，可恢复。`)) return;
 
     const success = await window.electronAPI.deleteFile(taskId, filePath, side);
     if (success) {
@@ -111,6 +111,15 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     }
   };
 
+  // 批量操作：一次 IPC 调用交给主进程批量处理，避免逐文件启动 Unison 进程
+  const markAllResolved = (files: { path: string }[]) => {
+    setResolvedPaths(prev => {
+      const next = new Set(prev);
+      files.forEach(f => next.add(f.path));
+      return next;
+    });
+  };
+
   const handleSyncAll = async (
     files: { path: string }[],
     direction: 'sourceToTarget' | 'targetToSource',
@@ -118,10 +127,8 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   ) => {
     if (!await window.electronAPI.showConfirm(`确定要同步全部 ${files.length} 个文件吗？`)) return;
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
-    for (const file of files) {
-      const success = await window.electronAPI.syncSingleFile(taskId, file.path, direction);
-      if (success) setResolvedPaths(prev => { const next = new Set(prev); next.add(file.path); return next; });
-    }
+    const success = await window.electronAPI.syncFiles(taskId, files.map(f => f.path), direction);
+    if (success) markAllResolved(files);
     setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
 
@@ -130,22 +137,18 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     side: 'source' | 'target',
     sectionKey: string,
   ) => {
-    if (!await window.electronAPI.showConfirm(`确定要删除全部 ${files.length} 个文件吗？此操作不可撤销。`)) return;
+    if (!await window.electronAPI.showConfirm(`确定要删除全部 ${files.length} 个文件吗？文件将移入系统废纸篓。`)) return;
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
-    for (const file of files) {
-      const success = await window.electronAPI.deleteFile(taskId, file.path, side);
-      if (success) setResolvedPaths(prev => { const next = new Set(prev); next.add(file.path); return next; });
-    }
+    const success = await window.electronAPI.deleteFiles(taskId, files.map(f => f.path), side);
+    if (success) markAllResolved(files);
     setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
 
   const handleIgnoreAll = async (files: { path: string }[], sectionKey: string) => {
     if (!await window.electronAPI.showConfirm(`确定要忽略全部 ${files.length} 个文件吗？`)) return;
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
-    for (const file of files) {
-      const success = await window.electronAPI.ignorePath(taskId, file.path);
-      if (success) setResolvedPaths(prev => { const next = new Set(prev); next.add(file.path); return next; });
-    }
+    const success = await window.electronAPI.ignorePaths(taskId, files.map(f => f.path));
+    if (success) markAllResolved(files);
     setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
 
@@ -189,6 +192,15 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                 </div>
               </div>
               <p className="font-bold text-slate-700">已检索 {scanCount.toLocaleString()} 个文件...</p>
+              <button
+                onClick={async () => {
+                  await window.electronAPI.cancelCompare();
+                  onClose();
+                }}
+                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium transition-colors"
+              >
+                取消对比
+              </button>
             </div>
           ) : (
             <>

@@ -15,6 +15,7 @@ export interface SyncTask {
   targetDisk?: { name: string; total: number; free: number }
   ignoredPaths?: string[]
   backupPath?: string
+  backupRetentionDays?: number
   pid?: number
 }
 
@@ -44,18 +45,24 @@ export interface ElectronAPI {
   resetSync: (id: string) => Promise<boolean>
   selectDirectory: () => Promise<string | null>
   compareDirectories: (id: string) => Promise<DiffResult>
+  cancelCompare: () => Promise<boolean>
   getPersistentLogs: (id: string) => Promise<string>
   clearPersistentLogs: (id: string) => Promise<boolean>
   openLogFolder: (id: string) => Promise<boolean>
+  getAppDataPath: () => Promise<string>
+  openAppDataFolder: () => Promise<boolean>
   getIgnorePatterns: () => Promise<string[]>
   getDefaultBackupPath: (taskId: string) => Promise<string>
   listBackupFiles: (taskId: string) => Promise<BackupFile[]>
   openBackupFolder: (taskId: string) => Promise<boolean>
-  revealBackupFile: (filePath: string) => Promise<boolean>
-  deleteBackupFile: (filePath: string) => Promise<boolean>
+  revealBackupFile: (taskId: string, filePath: string) => Promise<boolean>
+  deleteBackupFile: (taskId: string, filePath: string) => Promise<boolean>
   syncSingleFile: (taskId: string, filePath: string, direction: 'sourceToTarget' | 'targetToSource') => Promise<boolean>
+  syncFiles: (taskId: string, filePaths: string[], direction: 'sourceToTarget' | 'targetToSource') => Promise<boolean>
   deleteFile: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
+  deleteFiles: (taskId: string, filePaths: string[], side: 'source' | 'target') => Promise<boolean>
   ignorePath: (taskId: string, filePath: string) => Promise<boolean>
+  ignorePaths: (taskId: string, filePaths: string[]) => Promise<boolean>
   unignorePath: (taskId: string, filePath: string) => Promise<boolean>
   revealInFileExplorer: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
   onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; sourceStats?: any; targetStats?: any }) => void) => void

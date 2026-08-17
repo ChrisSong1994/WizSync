@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { SyncTask } from "../types";
 import { cn, formatSize } from "../utils";
+import { Tooltip } from "./Tooltip";
 
 interface TaskItemProps {
   task: SyncTask;
@@ -84,6 +85,24 @@ export const TaskItem: React.FC<TaskItemProps> = ({
     }
   };
 
+  // 各操作按钮的提示文案（随状态变化）
+  const diskDisconnected = !task.sourceDisk || !task.targetDisk;
+  const compareTooltip =
+    task.status === "syncing"
+      ? "同步进行中，无法对比"
+      : diskDisconnected
+        ? "磁盘未连接，无法对比"
+        : "对比两个目录的差异";
+  const resetTooltip = diskDisconnected
+    ? "磁盘未连接，无法重置"
+    : "强制重置，清理缓存后重新扫描";
+  const syncTooltip =
+    task.status === "syncing"
+      ? "停止同步"
+      : diskDisconnected
+        ? "磁盘未连接，无法同步"
+        : "开始同步";
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow overflow-hidden group">
       <div className="p-5 flex items-center gap-6">
@@ -139,13 +158,14 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 <span className="truncate max-w-[200px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100 text-slate-700 font-bold">
                   {task.sourcePath.split("/").filter(Boolean).pop() || "/"}
                 </span>
-                <button
-                  onClick={() => handleReveal("source")}
-                  className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
-                  title="在访达/资源管理器中定位"
-                >
-                  <MapPin size={12} />
-                </button>
+                <Tooltip content="在访达中定位源目录" side="bottom">
+                  <button
+                    onClick={() => handleReveal("source")}
+                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
+                  >
+                    <MapPin size={12} />
+                  </button>
+                </Tooltip>
               </div>
               <div className="flex flex-col mt-0.5 ml-1">
                 {task.sourceStats && (
@@ -195,13 +215,14 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 <span className="truncate max-w-[200px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100 text-slate-700 font-bold">
                   {task.targetPath.split("/").filter(Boolean).pop() || "/"}
                 </span>
-                <button
-                  onClick={() => handleReveal("target")}
-                  className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
-                  title="在访达/资源管理器中定位"
-                >
-                  <MapPin size={12} />
-                </button>
+                <Tooltip content="在访达中定位目标目录" side="bottom">
+                  <button
+                    onClick={() => handleReveal("target")}
+                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
+                  >
+                    <MapPin size={12} />
+                  </button>
+                </Tooltip>
               </div>
               <div className="flex flex-col mt-0.5 ml-1">
                 {task.targetStats && (
@@ -238,102 +259,92 @@ export const TaskItem: React.FC<TaskItemProps> = ({
 
         {/* 操作按钮 */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => onCompare(task.id)}
-            disabled={task.status === "syncing" || (!task.sourceDisk || !task.targetDisk)}
-            className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-              task.status === "syncing" || (!task.sourceDisk || !task.targetDisk)
-                ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                : "bg-slate-50 text-slate-600 hover:bg-slate-100",
-            )}
-            title={
-              task.status === "syncing"
-                ? "同步进行中，无法对比"
-                : (!task.sourceDisk || !task.targetDisk)
-                  ? "磁盘未连接，无法对比"
-                  : "对比差异"
-            }
-          >
-            <FileSearch size={20} />
-          </button>
-          <button
-            onClick={() => onShowBackup(task.id)}
-            className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
-            title="查看备份数据"
-          >
-            <Archive size={20} />
-          </button>
-          <button
-            onClick={handleReset}
-            disabled={task.status === "syncing" || resetting || (!task.sourceDisk || !task.targetDisk)}
-            className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-              task.status === "syncing" || resetting || (!task.sourceDisk || !task.targetDisk)
-                ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                : "bg-amber-50 text-amber-600 hover:bg-amber-100",
-            )}
-            title={
-              (!task.sourceDisk || !task.targetDisk)
-                ? "磁盘未连接，无法重置"
-                : "强制重置 (解决顽固报错)"
-            }
-          >
-            {resetting ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <RotateCcw size={20} />
-            )}
-          </button>
-          <button
-            onClick={() => onToggleSync(task)}
-            disabled={(!task.sourceDisk || !task.targetDisk) && task.status !== "syncing"}
-            className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-              ((!task.sourceDisk || !task.targetDisk) && task.status !== "syncing")
-                ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                : task.status === "syncing"
-                  ? "bg-amber-100 text-amber-600 hover:bg-amber-200"
-                  : "bg-blue-50 text-blue-600 hover:bg-blue-100",
-            )}
-            title={
-              task.status === "syncing"
-                ? "停止同步"
-                : (!task.sourceDisk || !task.targetDisk)
-                  ? "磁盘未连接，无法同步"
-                  : "开始同步"
-            }
-          >
-            {task.status === "syncing" ? (
-              <StopCircle size={22} />
-            ) : (
-              <Play size={22} fill="currentColor" />
-            )}
-          </button>
-          <button
-            onClick={() => onEditTask(task)}
-            className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
-            title="编辑任务"
-          >
-            <Edit3 size={20} />
-          </button>
-          <button
-            onClick={handleDeleteClick}
-            disabled={deleting}
-            className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-              deleting
-                ? "bg-red-100 text-red-400 cursor-not-allowed"
-                : "bg-red-50 text-red-600 hover:bg-red-100",
-            )}
-            title="删除任务"
-          >
-            {deleting ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <Trash2 size={20} />
-            )}
-          </button>
+          <Tooltip content={compareTooltip}>
+            <button
+              onClick={() => onCompare(task.id)}
+              disabled={task.status === "syncing" || diskDisconnected}
+              className={cn(
+                "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
+                task.status === "syncing" || diskDisconnected
+                  ? "bg-slate-50 text-slate-300 cursor-not-allowed"
+                  : "bg-slate-50 text-slate-600 hover:bg-slate-100",
+              )}
+            >
+              <FileSearch size={20} />
+            </button>
+          </Tooltip>
+          <Tooltip content="查看备份数据">
+            <button
+              onClick={() => onShowBackup(task.id)}
+              className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
+            >
+              <Archive size={20} />
+            </button>
+          </Tooltip>
+          <Tooltip content={resetTooltip}>
+            <button
+              onClick={handleReset}
+              disabled={task.status === "syncing" || resetting || diskDisconnected}
+              className={cn(
+                "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
+                task.status === "syncing" || resetting || diskDisconnected
+                  ? "bg-slate-50 text-slate-300 cursor-not-allowed"
+                  : "bg-amber-50 text-amber-600 hover:bg-amber-100",
+              )}
+            >
+              {resetting ? (
+                <Loader2 size={18} className="animate-spin" />
+              ) : (
+                <RotateCcw size={20} />
+              )}
+            </button>
+          </Tooltip>
+          <Tooltip content={syncTooltip}>
+            <button
+              onClick={() => onToggleSync(task)}
+              disabled={diskDisconnected && task.status !== "syncing"}
+              className={cn(
+                "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
+                diskDisconnected && task.status !== "syncing"
+                  ? "bg-slate-50 text-slate-300 cursor-not-allowed"
+                  : task.status === "syncing"
+                    ? "bg-amber-100 text-amber-600 hover:bg-amber-200"
+                    : "bg-blue-50 text-blue-600 hover:bg-blue-100",
+              )}
+            >
+              {task.status === "syncing" ? (
+                <StopCircle size={22} />
+              ) : (
+                <Play size={22} fill="currentColor" />
+              )}
+            </button>
+          </Tooltip>
+          <Tooltip content="编辑任务">
+            <button
+              onClick={() => onEditTask(task)}
+              className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
+            >
+              <Edit3 size={20} />
+            </button>
+          </Tooltip>
+          <Tooltip content="删除任务">
+            <button
+              onClick={handleDeleteClick}
+              disabled={deleting}
+              className={cn(
+                "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
+                deleting
+                  ? "bg-red-100 text-red-400 cursor-not-allowed"
+                  : "bg-red-50 text-red-600 hover:bg-red-100",
+              )}
+            >
+              {deleting ? (
+                <Loader2 size={18} className="animate-spin" />
+              ) : (
+                <Trash2 size={20} />
+              )}
+            </button>
+          </Tooltip>
         </div>
       </div>
 

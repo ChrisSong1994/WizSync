@@ -116,6 +116,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           </div>
 
+          {/* 单向 = 镜像 警告 */}
+          {(currentTask?.direction === "sourceToTarget" || currentTask?.direction === "targetToSource") && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 rounded-xl text-xs font-bold animate-in slide-in-from-top-2 duration-200">
+              ⚠️ 单向同步 = 镜像模式：目标端存在但源端不存在的文件将被自动删除，且无二次确认。请确认方向设置无误。
+            </div>
+          )}
+
           {/* 执行策略 */}
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-slate-700 ml-1">
@@ -183,6 +190,23 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 </span>
               </div>
             </label>
+          </div>
+
+          {/* 备份保留期 */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-bold text-slate-700 ml-1">
+              备份保留天数
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={currentTask?.backupRetentionDays || 30}
+              onChange={(e) => onChange({ backupRetentionDays: parseInt(e.target.value) })}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+            />
+            <p className="text-[11px] text-slate-400 ml-1">
+              备份目录中超过该天数的旧文件会被自动清理，默认 30 天
+            </p>
           </div>
         </div>
 

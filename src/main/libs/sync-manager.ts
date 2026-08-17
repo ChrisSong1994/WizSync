@@ -35,8 +35,9 @@ export class SyncManager {
 
   /**
    * 请求增量同步（带防抖，适用于批量手动操作后只触发一次增量扫描）
+   * @param paths 可选：仅对指定相对路径做 -path 增量同步，避免大目录全量扫描
    */
-  public requestIncrementalSync(id: string) {
+  public requestIncrementalSync(id: string, paths?: string[]) {
     if (this.resetDebounceTimers.has(id)) {
       clearTimeout(this.resetDebounceTimers.get(id)!);
     }
@@ -45,13 +46,33 @@ export class SyncManager {
       const tasks = syncStore.getTasks();
       const task = tasks.find(t => t.id === id);
       if (task) {
-        logManager.write(id, "[自动同步] 手动操作已完成，正在执行增量扫描...");
-        this.startTask(task);
+        if (paths && paths.length > 0) {
+          logManager.write(id, `[自动同步] 手动操作已完成，正在对 ${paths.length} 个路径执行增量同步...`);
+          try {
+            await this.runSpecificPathsChunked(task, paths);
+          } catch (err: any) {
+            logManager.write(id, `[自动同步] 增量同步失败: ${err?.message ?? String(err)}`);
+          }
+        } else {
+          logManager.write(id, "[自动同步] 手动操作已完成，正在执行增量扫描...");
+          this.startTask(task);
+        }
       }
       this.resetDebounceTimers.delete(id);
     }, 1500);
 
     this.resetDebounceTimers.set(id, timer);
+  }
+
+  /**
+   * 将待同步路径按每批 400 个 -path 分块串行执行，避免 exec 参数超限（ARG_MAX）
+   */
+  private async runSpecificPathsChunked(task: SyncTask, paths: string[]): Promise<void> {
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < paths.length; i += CHUNK_SIZE) {
+      const chunk = paths.slice(i, i + CHUNK_SIZE);
+      await this.runSpecificPathSync(task, chunk);
+    }
   }
 
   /**
@@ -178,15 +199,12 @@ export class SyncManager {
    * 停止并清理任务
    */
   stopTask(id: string) {
+    // 优先使用 activeProcesses 中的 ChildProcess 句柄。
+    // 不再回读持久化的 pid 用 process.kill：存储里的 pid 在上次崩溃重启后即为陈旧值，
+    // 且可能已被系统复用，直接 kill 存在误杀无关进程的风险。
     this.activeProcesses.get(id)?.kill();
     this.activeProcesses.delete(id);
-
-    // PID fallback: kill by stored PID in case activeProcesses map was lost
-    const storedTask = syncStore.getTasks().find(t => t.id === id);
-    if (storedTask?.pid) {
-      try { process.kill(storedTask.pid); } catch {}
-      syncStore.updateTask(id, { pid: undefined });
-    }
+    syncStore.updateTask(id, { pid: undefined });
 
     if (this.timers.has(id)) {
       clearInterval(this.timers.get(id)!);
@@ -201,29 +219,29 @@ export class SyncManager {
    */
   public async stopAllTasks() {
     logManager.write("global", "正在清理所有同步进程...");
-    
-    // 收集所有活跃 PID
-    const pids = new Set<number>();
-    this.activeProcesses.forEach(p => { if (p.pid) pids.add(p.pid); });
-    syncStore.getTasks().forEach(t => { if (t.pid) pids.add(t.pid); });
+
+    // 收集所有活跃的 ChildProcess 句柄（持久化 pid 仅用于清除陈旧记录，不用于 kill）
+    const procs = Array.from(this.activeProcesses.values());
 
     // 1. 停止所有定时器
     this.timers.forEach(timer => clearInterval(timer));
     this.timers.clear();
 
-    // 2. 发送 SIGTERM 信号
-    pids.forEach(pid => {
-      try { process.kill(pid, "SIGTERM"); } catch {}
+    // 2. 发送 SIGTERM 信号（通过句柄，避免 PID 复用误杀）
+    procs.forEach(p => {
+      try { p.kill("SIGTERM"); } catch {}
     });
 
-    // 3. 等待 500ms 后检查并强制清理
+    // 3. 等待 500ms 后检查并强制清理仍存活的句柄
     await new Promise(resolve => setTimeout(resolve, 500));
-    pids.forEach(pid => {
-      try {
-        process.kill(pid, 0); // 检查进程是否存在
-        process.kill(pid, "SIGKILL"); // 强制杀死
-        console.log(`[清理] 强制终止残留进程: ${pid}`);
-      } catch {}
+    procs.forEach(p => {
+      // 仍在运行（未收到 exit 事件）则强制终止
+      if (p.exitCode === null && p.signalCode === null) {
+        try {
+          p.kill("SIGKILL");
+          console.log(`[清理] 强制终止残留进程: ${p.pid}`);
+        } catch {}
+      }
     });
 
     this.activeProcesses.clear();
@@ -259,10 +277,11 @@ export class SyncManager {
   /**
    * 启动单文件/特定路径的 Unison 同步
    * 这是为了替代手动的 fs.copyFileSync 和 fs.unlinkSync，让 Unison 引擎自己处理，避免 Destination updated 错误
+   * @param specificPaths 一个或多个要同步的相对路径，会通过多个 -path 参数一次传给 Unison，避免逐文件启动进程
    */
-  public runSpecificPathSync(task: SyncTask, targetPathStr: string, specificDirection?: "sourceToTarget" | "targetToSource") {
-    // 复用原有的 runUnison，但通过额外的 path 参数限定只同步这个路径
-    return this.runUnison(task, [targetPathStr], specificDirection);
+  public runSpecificPathSync(task: SyncTask, specificPaths: string[], specificDirection?: "sourceToTarget" | "targetToSource") {
+    // 复用原有的 runUnison，但通过额外的 path 参数限定只同步这些路径
+    return this.runUnison(task, specificPaths, specificDirection);
   }
 
   /**
@@ -270,12 +289,17 @@ export class SyncManager {
    * @param specificPaths 如果提供，则只同步这些特定的相对路径
    * @param overrideDirection 如果提供，则临时覆盖同步方向（用于单向同步）
    */
-  private async runUnison(task: SyncTask, specificPaths?: string[], overrideDirection?: "sourceToTarget" | "targetToSource", retryCount: number = 0) {
-    if (this.activeProcesses.has(task.id)) return;
+  private runUnison(task: SyncTask, specificPaths?: string[], overrideDirection?: "sourceToTarget" | "targetToSource", retryCount: number = 0): Promise<void> {
+    // 返回的 Promise 在进程真正结束（或提前中止）时才 resolve，
+    // 以便调用方可以 await 等待本次同步完成（如批量分块同步）。
+    let onDone: () => void = () => {};
+    const exitPromise = new Promise<void>((resolve) => { onDone = resolve; });
+
+    if (this.activeProcesses.has(task.id)) return Promise.resolve();
 
     if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
       this.handleOffline(task);
-      return;
+      return Promise.resolve();
     }
 
     // 检测路径冲突：解析 symlink 后再比较，防止以下两种危险情况：
@@ -288,14 +312,14 @@ export class SyncManager {
     } catch {
       // realpathSync 失败说明路径无法解析（断链 symlink 等），当作离线处理
       this.handleOffline(task);
-      return;
+      return Promise.resolve();
     }
     if (srcReal === tgtReal) {
       const errMsg = `路径配置错误：源目录与目标目录解析后指向同一真实路径，拒绝同步。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
       console.error(errMsg);
       logManager.write(task.id, `[错误] ${errMsg}`);
       this.updateStatus(task.id, "error");
-      return;
+      return Promise.resolve();
     }
     const srcNorm = srcReal.endsWith(path.sep) ? srcReal : srcReal + path.sep;
     const tgtNorm = tgtReal.endsWith(path.sep) ? tgtReal : tgtReal + path.sep;
@@ -304,7 +328,7 @@ export class SyncManager {
       console.error(errMsg);
       logManager.write(task.id, `[错误] ${errMsg}`);
       this.updateStatus(task.id, "error");
-      return;
+      return Promise.resolve();
     }
 
     this.updateStatus(task.id, "syncing");
@@ -339,12 +363,14 @@ export class SyncManager {
     if (currentDirection === "sourceToTarget") {
       args.push("-prefer", task.sourcePath);
       args.push("-force", task.sourcePath);
-      // 一向同步时，对目标端的变动不敏感，防止 "Destination updated" 报错
-      args.push("-times=false");
+      // 单向同步也需传播时间戳：让 -fastcheck 能用 size+mtime 判定一致。
+      // 若用 -times=false，目标端 mtime 永远是"现在"，与源端不符，
+      // 每次同步都会触发全量内容哈希比对，表现为"永远同步不完/很慢"。
+      args.push("-times");
     } else if (currentDirection === "targetToSource") {
       args.push("-prefer", task.targetPath);
       args.push("-force", task.targetPath);
-      args.push("-times=false");
+      args.push("-times");
     } else {
       // 双向同步：以最新修改为准，需保持时间戳同步以识别变动
       args.push("-prefer", "newer");
@@ -384,9 +410,6 @@ export class SyncManager {
     args.push(task.sourcePath);
     args.push(task.targetPath);
 
-    if (currentDirection === "sourceToTarget") args.push("-force", task.sourcePath);
-    else if (currentDirection === "targetToSource") args.push("-force", task.targetPath);
-
     const unisonPath = getUnisonPath();
     
     // 关键：将 Unison 元数据存储在应用数据目录下的任务专用文件夹中
@@ -409,7 +432,7 @@ export class SyncManager {
       console.warn(errMsg);
       logManager.write(task.id, `[中止] ${errMsg}`);
       this.updateStatus(task.id, "error");
-      return;
+      return Promise.resolve();
     }
 
     const proc = spawn(unisonPath, args, { env });
@@ -426,6 +449,7 @@ export class SyncManager {
       syncStore.updateTask(task.id, { pid: undefined });
       logManager.write(task.id, `启动失败: ${err.message}`);
       this.updateStatus(task.id, "error");
+      onDone();
     });
 
     let outputBuffer = "";
@@ -515,6 +539,7 @@ export class SyncManager {
           logManager.write(task.id, msg);
           this.win?.webContents.send("sync-log", { id: task.id, log: msg });
           this.updateStatus(task.id, "error");
+          onDone();
           return;
         }
 
@@ -526,6 +551,7 @@ export class SyncManager {
           const currentTask = tasks.find(t => t.id === task.id);
           if (currentTask) this.runUnison(currentTask, specificPaths, overrideDirection, retryCount + 1);
         }, 1000);
+        onDone();
         return;
       }
       
@@ -566,7 +592,10 @@ export class SyncManager {
 
       logManager.write(task.id, `同步结束 (代码: ${code})${hasChanges ? " [有变动]" : " [无变动]"}`);
       this.onStatusChange?.();
+      onDone();
     });
+
+    return exitPromise;
   }
 
   private updateStatus(id: string, status: SyncTask["status"]) {

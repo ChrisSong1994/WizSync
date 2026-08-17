@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, session } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -6,7 +6,7 @@ import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
 import { logManager } from "./libs/logs";
 import { TrayManager } from "./libs/tray";
-import { getDirStats, getAllFiles, IGNORE_PATTERNS } from "./libs/fs-utils";
+import { getDirStats, getAllFiles, IGNORE_PATTERNS, resolveInside } from "./libs/fs-utils";
 import { diskManager } from "./libs/disk";
 import { SyncTask } from "./libs/types";
 
@@ -79,6 +79,11 @@ function createWindow() {
     minWidth: 850,
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
+      // 显式声明安全项，防止未来默认值变化带来回归
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     },
     titleBarStyle: "hiddenInset",
   });
@@ -134,6 +139,20 @@ app.on("before-quit", async (e) => {
 });
 
 app.whenReady().then(() => {
+  // 生产环境注入 CSP：仅在打包模式下生效，避免影响 vite dev（HMR 需要内联脚本与 ws 连接）
+  if (app.isPackaged) {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Content-Security-Policy": [
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'",
+          ],
+        },
+      });
+    });
+  }
+
   createWindow();
   trayManager.createTray(createWindow);
 
@@ -141,25 +160,24 @@ app.whenReady().then(() => {
   setTimeout(() => {
     const tasks = syncStore.getTasks();
 
-    // 清理 30 天前的备份文件（递归，跳过隐藏文件）
-    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    // 清理超过保留期的备份文件（递归，跳过隐藏文件；保留期默认 30 天，任务可配置）
     const now = Date.now();
-    const cleanOldBackups = (dir: string) => {
+    const cleanOldBackups = (dir: string, retentionMs: number) => {
       try {
         fs.readdirSync(dir, { withFileTypes: true }).forEach((entry) => {
           const fullPath = path.join(dir, entry.name);
           if (entry.isDirectory()) {
-            cleanOldBackups(fullPath);
+            cleanOldBackups(fullPath, retentionMs);
           } else if (entry.isFile()) {
             const mtime = fs.statSync(fullPath).mtimeMs;
-            if (now - mtime > THIRTY_DAYS) fs.unlinkSync(fullPath);
+            if (now - mtime > retentionMs) fs.unlinkSync(fullPath);
           }
         });
       } catch {}
     };
     tasks.forEach((task) => {
       if (!task.backupPath || !fs.existsSync(task.backupPath)) return;
-      cleanOldBackups(task.backupPath);
+      cleanOldBackups(task.backupPath, getRetentionMs(task));
     });
 
     tasks.forEach((task) => {
@@ -171,6 +189,42 @@ app.whenReady().then(() => {
 });
 
 // IPC 处理器绑定
+
+/**
+ * 校验渲染进程传来的相对路径不越出同步根目录。
+ * 返回解析后的完整路径；越界返回 null（调用方应拒绝并记日志）。
+ * 空字符串合法，表示根目录本身（用于 reveal 根目录）。
+ */
+function resolveInRoot(root: string, relPath: string): string | null {
+  const full = resolveInside(root, relPath);
+  if (!full) {
+    console.warn(`[安全] 已拒绝越界路径: "${relPath}" (根目录: ${root})`);
+  }
+  return full;
+}
+
+/** 备份保留天数默认值 */
+const DEFAULT_BACKUP_RETENTION_DAYS = 30;
+
+/** 根据任务配置计算备份保留期（毫秒），未配置时取默认值 */
+function getRetentionMs(task: SyncTask): number {
+  const days = task.backupRetentionDays && task.backupRetentionDays > 0
+    ? task.backupRetentionDays
+    : DEFAULT_BACKUP_RETENTION_DAYS;
+  return days * 24 * 60 * 60 * 1000;
+}
+
+/** 当前 compare 扫描的取消控制器（一次只允许一个对比进行） */
+let compareController: AbortController | null = null;
+
+ipcMain.handle("cancel-compare", () => {
+  if (compareController) {
+    compareController.abort();
+    return true;
+  }
+  return false;
+});
+
 ipcMain.handle("get-tasks", () => syncStore.getTasks());
 
 ipcMain.handle("show-confirm", async (_event, message: string) => {
@@ -269,18 +323,12 @@ ipcMain.handle(
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return false;
 
+    // 越界校验：filePath 必须是同步根目录内的相对路径
+    const base = direction === "sourceToTarget" ? task.sourcePath : task.targetPath;
+    if (!resolveInRoot(base, filePath)) return false;
+
     // 标记正在手动同步，防止触发 Unison 冲突
     syncManager.setManualSyncing(taskId, true);
-
-    const src =
-      direction === "sourceToTarget"
-        ? path.join(task.sourcePath, filePath)
-        : path.join(task.targetPath, filePath);
-
-    const dest =
-      direction === "sourceToTarget"
-        ? path.join(task.targetPath, filePath)
-        : path.join(task.sourcePath, filePath);
 
     try {
       // 交给 Unison 引擎处理单文件同步
@@ -289,7 +337,7 @@ ipcMain.handle(
         `[手动同步] 正在通过引擎同步特定文件: ${filePath} (${direction === "sourceToTarget" ? "源→目标" : "目标→源"})`,
       );
 
-      syncManager.runSpecificPathSync(task, filePath, direction);
+      syncManager.runSpecificPathSync(task, [filePath], direction);
       return true;
     } catch (err: any) {
       console.error("单文件同步启动失败:", err);
@@ -315,7 +363,9 @@ ipcMain.handle(
     if (!task) return false;
 
     const basePath = side === "source" ? task.sourcePath : task.targetPath;
-    const fullPath = path.join(basePath, filePath);
+    // 越界校验，防止揭示同步根目录之外的文件
+    const fullPath = resolveInRoot(basePath, filePath);
+    if (!fullPath) return false;
 
     if (fs.existsSync(fullPath)) {
       shell.showItemInFolder(fullPath);
@@ -325,7 +375,10 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle("reveal-backup-file", (_event, filePath: string) => {
+ipcMain.handle("reveal-backup-file", (_event, taskId: string, filePath: string) => {
+  // 只允许揭示属于该任务的备份目录内的文件
+  const task = syncStore.getTasks().find((t) => t.id === taskId);
+  if (!task?.backupPath || !resolveInRoot(task.backupPath, filePath)) return false;
   if (fs.existsSync(filePath)) {
     shell.showItemInFolder(filePath);
     return true;
@@ -336,6 +389,18 @@ ipcMain.handle("reveal-backup-file", (_event, filePath: string) => {
 ipcMain.handle("open-log-folder", (_event, id: string) => {
   const dir = logManager.getTaskDir(id);
   shell.openPath(dir);
+  return true;
+});
+
+ipcMain.handle("get-app-data-path", () => app.getPath("userData"));
+
+ipcMain.handle("open-app-data-folder", async () => {
+  const dir = app.getPath("userData");
+  // 目录可能尚未创建，先确保存在再打开
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  await shell.openPath(dir);
   return true;
 });
 
@@ -360,7 +425,7 @@ ipcMain.handle("list-backup-files", async (_event, id: string) => {
   const task = tasks.find((t) => t.id === id);
   if (!task?.backupPath || !fs.existsSync(task.backupPath)) return [];
 
-  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+  const retentionMs = getRetentionMs(task);
   const now = Date.now();
   const results: { name: string; path: string; relativePath: string; size: number; mtime: number }[] = [];
 
@@ -372,7 +437,7 @@ ipcMain.handle("list-backup-files", async (_event, id: string) => {
           scan(fullPath);
         } else if (entry.isFile()) {
           const stats = fs.statSync(fullPath);
-          if (now - stats.mtimeMs < THIRTY_DAYS) {
+          if (now - stats.mtimeMs < retentionMs) {
             const relativePath = path.relative(task.backupPath!, fullPath);
             results.push({ name: entry.name, path: fullPath, relativePath, size: stats.size, mtime: stats.mtimeMs });
           }
@@ -385,11 +450,18 @@ ipcMain.handle("list-backup-files", async (_event, id: string) => {
   return results.sort((a, b) => b.mtime - a.mtime);
 });
 
-ipcMain.handle("delete-backup-file", (_event, filePath: string) => {
+ipcMain.handle("delete-backup-file", async (_event, taskId: string, filePath: string) => {
+  // 只允许删除属于该任务的备份目录内的文件，防止任意文件删除
+  const task = syncStore.getTasks().find((t) => t.id === taskId);
+  if (!task?.backupPath || !resolveInRoot(task.backupPath, filePath)) {
+    console.warn("[delete-backup-file] 已拒绝越界路径:", filePath);
+    return false;
+  }
   try {
     const stats = fs.statSync(filePath);
     if (!stats.isFile()) return false;
-    fs.unlinkSync(filePath);
+    // 移入废纸篓而非永久删除，提供可恢复性
+    await shell.trashItem(filePath);
     return true;
   } catch (err) {
     console.error("[delete-backup-file] 删除失败:", filePath, err);
@@ -409,16 +481,19 @@ ipcMain.handle(
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return false;
 
+    // 越界校验，防止删除同步根目录之外的文件
+    const basePath = side === "source" ? task.sourcePath : task.targetPath;
+    const fullPath = resolveInRoot(basePath, filePath);
+    if (!fullPath) return false;
+
     // 标记正在手动操作，防止同步引擎干扰
     syncManager.setManualSyncing(taskId, true);
 
-    const basePath = side === "source" ? task.sourcePath : task.targetPath;
-    const fullPath = path.join(basePath, filePath);
-
     try {
       if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-        logManager.write(taskId, `[手动删除] 已删除${side === "source" ? "源端" : "目标端"}文件: ${filePath}`);
+        // 移入废纸篓而非永久删除，提供可恢复性
+        await shell.trashItem(fullPath);
+        logManager.write(taskId, `[手动删除] 已删除${side === "source" ? "源端" : "目标端"}文件: ${filePath}（移入废纸篓）`);
         return true;
       }
       return false;
@@ -427,12 +502,135 @@ ipcMain.handle(
       logManager.write(taskId, `[错误] 删除文件失败: ${err.message}`);
       return false;
     } finally {
-      // 释放标记并请求延迟增量同步
+      // 释放标记，并仅对删除的路径做 -path 增量同步，避免全量扫描
       syncManager.setManualSyncing(taskId, false);
-      syncManager.requestIncrementalSync(taskId);
+      syncManager.requestIncrementalSync(taskId, [filePath]);
     }
   },
 );
+
+// ---- 批量操作 IPC（一次 Unison 调用处理多个文件，避免逐文件启动进程） ----
+
+/**
+ * 批量校验一组相对路径是否都在根目录内；合法时返回解析后的完整路径数组。
+ */
+function resolvePathsInRoot(root: string, paths: string[]): string[] | null {
+  const resolved: string[] = [];
+  for (const p of paths) {
+    if (typeof p !== "string") return null;
+    const full = resolveInRoot(root, p);
+    if (!full) return null;
+    resolved.push(full);
+  }
+  return resolved;
+}
+
+ipcMain.handle(
+  "sync-files",
+  async (
+    _event,
+    taskId: string,
+    filePaths: string[],
+    direction: "sourceToTarget" | "targetToSource",
+  ) => {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+    if (!Array.isArray(filePaths) || filePaths.length === 0) return true;
+
+    // 批量越界校验
+    const base = direction === "sourceToTarget" ? task.sourcePath : task.targetPath;
+    if (!resolvePathsInRoot(base, filePaths)) return false;
+
+    // 标记正在手动同步，防止触发 Unison 冲突
+    syncManager.setManualSyncing(taskId, true);
+    try {
+      logManager.write(
+        taskId,
+        `[手动同步] 正在通过引擎批量同步 ${filePaths.length} 个文件 (${direction === "sourceToTarget" ? "源→目标" : "目标→源"})`,
+      );
+
+      // 分批（每批 400 个 -path），避免单次 exec 参数超过系统 ARG_MAX 限制；
+      // 逐批 await，确保同一时刻只有一个 Unison 进程在跑
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < filePaths.length; i += CHUNK_SIZE) {
+        const chunk = filePaths.slice(i, i + CHUNK_SIZE);
+        await syncManager.runSpecificPathSync(task, chunk, direction);
+      }
+      return true;
+    } catch (err: any) {
+      console.error("批量同步启动失败:", err);
+      logManager.write(taskId, `[错误] 批量同步启动失败: ${err.message}`);
+      return false;
+    } finally {
+      // 释放手动同步标记，引擎会自动更新状态
+      syncManager.setManualSyncing(taskId, false);
+    }
+  },
+);
+
+ipcMain.handle(
+  "delete-files",
+  async (_event, taskId: string, filePaths: string[], side: "source" | "target") => {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+
+    const basePath = side === "source" ? task.sourcePath : task.targetPath;
+    const resolved = resolvePathsInRoot(basePath, filePaths);
+    if (!resolved) return false;
+
+    // 标记正在手动操作，防止同步引擎干扰
+    syncManager.setManualSyncing(taskId, true);
+    try {
+      let deleted = 0;
+      for (const full of resolved) {
+        try {
+          if (fs.existsSync(full)) {
+            // 移入废纸篓而非永久删除，提供可恢复性
+            await shell.trashItem(full);
+            deleted++;
+          }
+        } catch (err) {
+          console.error("批量删除单个文件失败:", full, err);
+        }
+      }
+      if (deleted > 0) {
+        logManager.write(taskId, `[手动删除] 已批量删除${side === "source" ? "源端" : "目标端"} ${deleted} 个文件（移入废纸篓）`);
+      }
+      return true;
+    } catch (err: any) {
+      console.error("批量删除失败:", err);
+      logManager.write(taskId, `[错误] 批量删除失败: ${err.message}`);
+      return false;
+    } finally {
+      // 释放标记，并仅对删除的路径做 -path 增量同步，避免全量扫描
+      syncManager.setManualSyncing(taskId, false);
+      syncManager.requestIncrementalSync(taskId, filePaths);
+    }
+  },
+);
+
+ipcMain.handle("ignore-paths", async (_event, taskId: string, filePaths: string[]) => {
+  const tasks = syncStore.getTasks();
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task) return false;
+  if (!Array.isArray(filePaths) || filePaths.length === 0) return true;
+
+  const ignoredPaths = task.ignoredPaths || [];
+  let added = 0;
+  for (const p of filePaths) {
+    if (typeof p === "string" && !ignoredPaths.includes(p)) {
+      ignoredPaths.push(p);
+      added++;
+    }
+  }
+  if (added > 0) {
+    syncStore.updateTask(taskId, { ignoredPaths });
+    logManager.write(taskId, `[手动忽略] 已批量忽略 ${added} 个路径`);
+  }
+  return true;
+});
 
 ipcMain.handle(
   "ignore-path",
@@ -478,67 +676,84 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
     event.sender.send("compare-progress", { id, count });
   };
 
-  // 并行扫描两个目录，并实时向渲染进程报告进度
-  const [sourceFiles, targetFiles] = await Promise.all([
-    getAllFiles(task.sourcePath, task.sourcePath, { count: 0 }, sendProgress),
-    getAllFiles(task.targetPath, task.targetPath, { count: 0 }, sendProgress),
-  ]);
+  // 支持取消：创建新的 AbortController，渲染进程可通过 cancel-compare 中止本次扫描
+  compareController = new AbortController();
+  const signal = compareController.signal;
 
-  const ignoredPaths = task.ignoredPaths || [];
-  const isIgnored = (relPath: string) => {
-    return ignoredPaths.some(p => relPath === p || relPath.startsWith(p + path.sep));
-  };
+  try {
+    // 并行扫描两个目录，并实时向渲染进程报告进度
+    const [sourceFiles, targetFiles] = await Promise.all([
+      getAllFiles(task.sourcePath, task.sourcePath, { count: 0 }, sendProgress, signal),
+      getAllFiles(task.targetPath, task.targetPath, { count: 0 }, sendProgress, signal),
+    ]);
 
-  const diff = {
-    sourceOnly: [] as any[],
-    targetOnly: [] as any[],
-    different: [] as any[],
-    renamed: [] as any[],
-    ignored: [] as any[],
-  };
+    const ignoredPaths = task.ignoredPaths || [];
+    const isIgnored = (relPath: string) => {
+      return ignoredPaths.some(p => relPath === p || relPath.startsWith(p + path.sep));
+    };
 
-  let processedCount = 0;
-  for (const [relPath, sInfo] of sourceFiles) {
-    if (isIgnored(relPath)) {
-      diff.ignored.push({ path: relPath, size: sInfo.size, side: targetFiles.has(relPath) ? 'both' : 'source' });
-      continue;
+    const diff = {
+      sourceOnly: [] as any[],
+      targetOnly: [] as any[],
+      different: [] as any[],
+      renamed: [] as any[],
+      ignored: [] as any[],
+    };
+
+    let processedCount = 0;
+    for (const [relPath, sInfo] of sourceFiles) {
+      if (isIgnored(relPath)) {
+        diff.ignored.push({ path: relPath, size: sInfo.size, side: targetFiles.has(relPath) ? 'both' : 'source' });
+        continue;
+      }
+
+      const tInfo = targetFiles.get(relPath);
+      if (!tInfo) {
+        diff.sourceOnly.push({ path: relPath, size: sInfo.size, mtime: sInfo.mtime });
+      } else if (
+        sInfo.size !== tInfo.size ||
+        Math.abs(sInfo.mtime - tInfo.mtime) > 2000
+      ) {
+        diff.different.push({
+          path: relPath,
+          sourceSize: sInfo.size,
+          targetSize: tInfo.size,
+          sourceMtime: sInfo.mtime,
+          targetMtime: tInfo.mtime,
+        });
+      }
+
+      if (signal.aborted) throw new Error("compare-cancelled");
+      processedCount++;
+      if (processedCount % 500 === 0) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
     }
 
-    const tInfo = targetFiles.get(relPath);
-    if (!tInfo) {
-      diff.sourceOnly.push({ path: relPath, size: sInfo.size, mtime: sInfo.mtime });
-    } else if (
-      sInfo.size !== tInfo.size ||
-      Math.abs(sInfo.mtime - tInfo.mtime) > 2000
-    ) {
-      diff.different.push({
-        path: relPath,
-        sourceSize: sInfo.size,
-        targetSize: tInfo.size,
-        sourceMtime: sInfo.mtime,
-        targetMtime: tInfo.mtime,
-      });
+    for (const [relPath, tInfo] of targetFiles) {
+      if (sourceFiles.has(relPath)) continue;
+
+      if (signal.aborted) throw new Error("compare-cancelled");
+      if (isIgnored(relPath)) {
+        diff.ignored.push({ path: relPath, size: tInfo.size, side: 'target' });
+        continue;
+      }
+
+      diff.targetOnly.push({ path: relPath, size: tInfo.size, mtime: tInfo.mtime });
     }
 
-    processedCount++;
-    if (processedCount % 500 === 0) {
-      await new Promise((resolve) => setImmediate(resolve));
+    diff.sourceOnly = diff.sourceOnly.map(f => ({ path: f.path, size: f.size }));
+    diff.targetOnly = diff.targetOnly.map(f => ({ path: f.path, size: f.size }));
+
+    return diff;
+  } catch (err) {
+    // 用户取消对比：作为已取消错误抛出，渲染进程据此关闭扫描界面
+    if (signal.aborted) {
+      console.log("[compare] 用户已取消对比");
+      throw new Error("compare-cancelled");
     }
+    throw err;
+  } finally {
+    compareController = null;
   }
-
-  for (const [relPath, tInfo] of targetFiles) {
-    if (sourceFiles.has(relPath)) continue;
-    
-    if (isIgnored(relPath)) {
-      diff.ignored.push({ path: relPath, size: tInfo.size, side: 'target' });
-      continue;
-    }
-    
-    diff.targetOnly.push({ path: relPath, size: tInfo.size, mtime: tInfo.mtime });
-  }
-
-  diff.sourceOnly = diff.sourceOnly.map(f => ({ path: f.path, size: f.size }));
-  diff.targetOnly = diff.targetOnly.map(f => ({ path: f.path, size: f.size }));
-
-  return diff;
 });

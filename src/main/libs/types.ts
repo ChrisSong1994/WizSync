@@ -15,5 +15,6 @@ export interface SyncTask {
   targetDisk?: { name: string; total: number; free: number };
   ignoredPaths?: string[];
   backupPath?: string;
+  backupRetentionDays?: number; // 备份保留天数，0 或未设置时用默认值 30
   pid?: number; // 当前 Unison 进程 ID
 }

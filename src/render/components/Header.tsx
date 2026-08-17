@@ -1,12 +1,13 @@
 import React from "react";
-import { Plus } from "lucide-react";
+import { Plus, Settings } from "lucide-react";
 import Logo from "../assets/logo.png";
 
 interface HeaderProps {
   onAddTask: () => void;
+  onOpenSettings: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onAddTask }) => {
+export const Header: React.FC<HeaderProps> = ({ onAddTask, onOpenSettings }) => {
   return (
     <header
       className="bg-white border-b border-slate-200 pl-20 pr-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm"
@@ -32,14 +33,25 @@ export const Header: React.FC<HeaderProps> = ({ onAddTask }) => {
           </p>
         </div>
       </div>
-      <button
-        onClick={onAddTask}
+      <div
+        className="flex items-center gap-2"
         style={{ WebkitAppRegion: "no-drag" } as any}
-        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold transition-all shadow-lg shadow-blue-200 hover:shadow-blue-300 active:scale-95"
       >
-        <Plus size={18} />
-        <span>添加任务</span>
-      </button>
+        <button
+          onClick={onOpenSettings}
+          title="设置"
+          className="flex items-center justify-center w-10 h-10 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
+        >
+          <Settings size={18} />
+        </button>
+        <button
+          onClick={onAddTask}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold transition-all shadow-lg shadow-blue-200 hover:shadow-blue-300 active:scale-95"
+        >
+          <Plus size={18} />
+          <span>添加任务</span>
+        </button>
+      </div>
     </header>
   );
 };
