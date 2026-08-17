@@ -7,7 +7,7 @@ import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
 import { logManager } from "./libs/logs";
 import { TrayManager } from "./libs/tray";
-import { getDirStats, getAllFiles, IGNORE_PATTERNS, resolveInside } from "./libs/fs-utils";
+import { getDirStats, getAllFiles, filesContentEqual, IGNORE_PATTERNS, resolveInside } from "./libs/fs-utils";
 import { diskManager } from "./libs/disk";
 import { SyncTask } from "./libs/types";
 
@@ -806,10 +806,8 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
       const tInfo = targetFiles.get(relPath);
       if (!tInfo) {
         diff.sourceOnly.push({ path: relPath, size: sInfo.size, mtime: sInfo.mtime });
-      } else if (
-        sInfo.size !== tInfo.size ||
-        Math.abs(sInfo.mtime - tInfo.mtime) > 2000
-      ) {
+      } else if (sInfo.size !== tInfo.size) {
+        // 大小不同：一定需要同步
         diff.different.push({
           path: relPath,
           sourceSize: sInfo.size,
@@ -817,6 +815,24 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
           sourceMtime: sInfo.mtime,
           targetMtime: tInfo.mtime,
         });
+      } else if (Math.abs(sInfo.mtime - tInfo.mtime) > 2000) {
+        // 大小相同但 mtime 差超过容差：FAT/APFS 时间戳精度噪音常见，仅靠 mtime
+        // 会把内容一致的文件误报为"不同"。流式比对内容，与 unison 的判定保持一致
+        // （unison 在 fastcheck 判定 mtime 有差异后也会走内容比对）。
+        if (signal.aborted) throw new Error("compare-cancelled");
+        const sameContent = await filesContentEqual(
+          path.join(task.sourcePath, relPath),
+          path.join(task.targetPath, relPath),
+        );
+        if (!sameContent) {
+          diff.different.push({
+            path: relPath,
+            sourceSize: sInfo.size,
+            targetSize: tInfo.size,
+            sourceMtime: sInfo.mtime,
+            targetMtime: tInfo.mtime,
+          });
+        }
       }
 
       if (signal.aborted) throw new Error("compare-cancelled");

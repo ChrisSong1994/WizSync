@@ -546,21 +546,38 @@ export class SyncManager {
 
       outputBuffer += chunk;
       checkStatus(chunk);
-      if (outputBuffer.length > 2000) flushBuffer();
+      // 即时落盘：unison -terse 模式下 stdout 输出量很小（扫描提示、变更摘要），
+      // 若攒到 2000 字符才 flush，长扫描期间日志会长时间无输出，看起来像卡死。
+      flushBuffer();
     });
 
     proc.stderr.on("data", (data) => {
-      const errorMsg: string = data.toString();
+      const chunk: string = data.toString();
 
       // 同样在 stderr 中过滤
-      if (errorMsg.includes("Destination updated during synchronization") || errorMsg.includes("Synchronization incomplete")) {
-        checkStatus(errorMsg);
+      if (chunk.includes("Destination updated during synchronization") || chunk.includes("Synchronization incomplete")) {
+        checkStatus(chunk);
         return;
       }
 
-      checkStatus(errorMsg);
-      logManager.write(task.id, `[stderr] ${errorMsg}`);
-      this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${errorMsg}` });
+      checkStatus(chunk);
+
+      // unison -terse 模式把"复制进度/完成"这类正常信息也写到 stderr，与真正的
+      // 错误/警告混在一起。把明确的正常进度行与警告区分开，避免用户把
+      // [BGN]/[END] 复制进度当成报错（之前统一加 [stderr] / 警告: 前缀误导）。
+      const trimmed = chunk.trimStart();
+      const isProgress =
+        trimmed.startsWith("[BGN]") ||
+        trimmed.startsWith("[END]") ||
+        chunk.includes("Synchronization complete");
+
+      if (isProgress) {
+        logManager.write(task.id, chunk);
+        this.win?.webContents.send("sync-log", { id: task.id, log: chunk });
+      } else {
+        logManager.write(task.id, `[stderr] ${chunk}`);
+        this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${chunk}` });
+      }
     });
 
     proc.on("close", async (code) => {

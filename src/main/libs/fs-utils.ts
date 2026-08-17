@@ -209,3 +209,35 @@ export async function getAllFiles(
   }
   return result;
 }
+
+/**
+ * 流式比对两个文件内容是否一致（64KB 分块，遇首个差异字节即返回 false）。
+ * 用于对比功能在"大小相同但 mtime 有差异"时确认是否真的不同——
+ * FAT/SD 等卷的时间戳精度会把内容一致的文件误报为需要同步。
+ * 任一侧无法读取时按"不相同"处理，让上层把它交给同步引擎去核实。
+ */
+export async function filesContentEqual(a: string, b: string): Promise<boolean> {
+  const CHUNK = 64 * 1024;
+  let fa: fs.promises.FileHandle | null = null;
+  let fb: fs.promises.FileHandle | null = null;
+  try {
+    fa = await fs.promises.open(a, "r");
+    fb = await fs.promises.open(b, "r");
+    const bufA = Buffer.alloc(CHUNK);
+    const bufB = Buffer.alloc(CHUNK);
+    while (true) {
+      const [ra, rb] = await Promise.all([
+        fa.read(bufA, 0, CHUNK, null),
+        fb.read(bufB, 0, CHUNK, null),
+      ]);
+      if (ra.bytesRead !== rb.bytesRead) return false;
+      if (ra.bytesRead === 0) return true;
+      if (!bufA.subarray(0, ra.bytesRead).equals(bufB.subarray(0, rb.bytesRead))) return false;
+      if (ra.bytesRead < CHUNK) return true;
+    }
+  } catch {
+    return false;
+  } finally {
+    await Promise.all([fa?.close(), fb?.close()].map(p => p?.catch(() => {})));
+  }
+}

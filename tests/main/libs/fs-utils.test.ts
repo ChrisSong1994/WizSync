@@ -8,6 +8,7 @@ import {
   isPathInside,
   resolveInside,
   getAllFiles,
+  filesContentEqual,
 } from "../../../src/main/libs/fs-utils";
 
 let tmpDir: string;
@@ -179,5 +180,55 @@ describe("getAllFiles", () => {
 describe("IGNORE_PATTERNS", () => {
   it("包含约定的黑名单", () => {
     expect(IGNORE_PATTERNS).toEqual(["node_modules", "Thumbs.db", "desktop.ini"]);
+  });
+});
+
+describe("filesContentEqual", () => {
+  it("内容一致时返回 true", async () => {
+    const a = path.join(tmpDir, "a.txt");
+    const b = path.join(tmpDir, "b.txt");
+    fs.writeFileSync(a, "hello world");
+    fs.writeFileSync(b, "hello world");
+    expect(await filesContentEqual(a, b)).toBe(true);
+  });
+
+  it("内容不同但长度相同返回 false", async () => {
+    const a = path.join(tmpDir, "a.txt");
+    const b = path.join(tmpDir, "b.txt");
+    fs.writeFileSync(a, "hello!");
+    fs.writeFileSync(b, "world!");
+    expect(await filesContentEqual(a, b)).toBe(false);
+  });
+
+  it("内容不同且长度不同返回 false", async () => {
+    const a = path.join(tmpDir, "a.txt");
+    const b = path.join(tmpDir, "b.txt");
+    fs.writeFileSync(a, "short");
+    fs.writeFileSync(b, "a much longer content");
+    expect(await filesContentEqual(a, b)).toBe(false);
+  });
+
+  it("超过单块(64KB)的大文件内容一致返回 true", async () => {
+    const big = "x".repeat(70 * 1024); // 跨块
+    const a = path.join(tmpDir, "big-a.bin");
+    const b = path.join(tmpDir, "big-b.bin");
+    fs.writeFileSync(a, big);
+    fs.writeFileSync(b, big);
+    expect(await filesContentEqual(a, b)).toBe(true);
+  });
+
+  it("超过单块的大文件在块边界处不同返回 false", async () => {
+    const a = path.join(tmpDir, "big-a.bin");
+    const b = path.join(tmpDir, "big-b.bin");
+    fs.writeFileSync(a, "x".repeat(64 * 1024) + "A");
+    fs.writeFileSync(b, "x".repeat(64 * 1024) + "B");
+    expect(await filesContentEqual(a, b)).toBe(false);
+  });
+
+  it("任一侧文件缺失返回 false", async () => {
+    const a = path.join(tmpDir, "exists.txt");
+    const b = path.join(tmpDir, "missing.txt");
+    fs.writeFileSync(a, "x");
+    expect(await filesContentEqual(a, b)).toBe(false);
   });
 });
