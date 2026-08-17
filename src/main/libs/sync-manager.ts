@@ -21,6 +21,10 @@ export class SyncManager {
 
   private isManualSyncing: Map<string, boolean> = new Map();
   private resetDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  /** 已登记的同步失败重试定时器；stopTask 时需要取消并解除等待，防止任务复活 */
+  private pendingRetries: Map<string, { timer: NodeJS.Timeout; resolve: (ok: boolean) => void }> = new Map();
+  /** 正在执行停止操作的任务 id；进程 close 处理器据此跳过重试与状态更新 */
+  private stopRequested: Set<string> = new Set();
 
   /**
    * 获取任务在应用数据目录下的专用文件夹
@@ -55,7 +59,7 @@ export class SyncManager {
           }
         } else {
           logManager.write(id, "[自动同步] 手动操作已完成，正在执行增量扫描...");
-          this.startTask(task);
+          await this.startTask(task);
         }
       }
       this.resetDebounceTimers.delete(id);
@@ -71,7 +75,8 @@ export class SyncManager {
     const CHUNK_SIZE = 400;
     for (let i = 0; i < paths.length; i += CHUNK_SIZE) {
       const chunk = paths.slice(i, i + CHUNK_SIZE);
-      await this.runSpecificPathSync(task, chunk);
+      const ok = await this.runSpecificPathSync(task, chunk);
+      if (!ok) break; // 任务被停止或离线，中止剩余批次
     }
   }
 
@@ -135,24 +140,20 @@ export class SyncManager {
   /**
    * 删除任务：停止进程+清理缓存
    */
-  deleteTask(task: SyncTask) {
-    this.stopTask(task.id);
-    this.cleanUnisonArchives(task).catch(() => {});
+  async deleteTask(task: SyncTask) {
+    await this.stopTask(task.id);
+    await this.cleanUnisonArchives(task).catch(() => {});
   }
 
   /**
    * 重置任务：强制清理 Unison 缓存并重新启动同步
    */
   public async resetTask(task: SyncTask) {
-    this.stopTask(task.id);
+    // stopTask 会等待进程真正退出（close 事件）后再返回，归档目录可安全清理
+    await this.stopTask(task.id);
     logManager.write(task.id, "=== 强制重置同步缓存 (Archive) ===");
-    
-    // 强制等待 1 秒让磁盘句柄释放
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
     await this.cleanUnisonArchives(task);
     logManager.write(task.id, "缓存清理完成，正在重新初始化同步...");
-    
     this.startTask(task);
   }
 
@@ -175,8 +176,9 @@ export class SyncManager {
   /**
    * 启动任务
    */
-  startTask(task: SyncTask) {
-    this.stopTask(task.id);
+  async startTask(task: SyncTask) {
+    // 等待旧进程完全退出后再启动新进程，杜绝同任务双开
+    await this.stopTask(task.id);
 
     if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
       const offlinePath = !fs.existsSync(task.sourcePath) ? "源目录" : "目标目录";
@@ -197,21 +199,66 @@ export class SyncManager {
 
   /**
    * 停止并清理任务
+   * 关键点：等待进程真正退出（close 事件）后再返回，避免旧进程尚未结束就启动新进程导致双开；
+   * 同时取消所有 pending 定时器，防止任务被自动复活。
    */
-  stopTask(id: string) {
-    // 优先使用 activeProcesses 中的 ChildProcess 句柄。
-    // 不再回读持久化的 pid 用 process.kill：存储里的 pid 在上次崩溃重启后即为陈旧值，
-    // 且可能已被系统复用，直接 kill 存在误杀无关进程的风险。
-    this.activeProcesses.get(id)?.kill();
-    this.activeProcesses.delete(id);
-    syncStore.updateTask(id, { pid: undefined });
+  async stopTask(id: string) {
+    // 取消待执行的增量同步防抖与失败重试（重试取消时会解除等待中的同步 Promise）
+    this.cancelIncrementalSync(id);
+    this.cancelPendingRetry(id);
 
+    // 停止定时任务的轮询定时器
     if (this.timers.has(id)) {
       clearInterval(this.timers.get(id)!);
       this.timers.delete(id);
     }
 
+    // 优先使用 activeProcesses 中的 ChildProcess 句柄。
+    // 不再回读持久化的 pid 用 process.kill：存储里的 pid 在上次崩溃重启后即为陈旧值，
+    // 且可能已被系统复用，直接 kill 存在误杀无关进程的风险。
+    const proc = this.activeProcesses.get(id);
+    this.activeProcesses.delete(id);
+    syncStore.updateTask(id, { pid: undefined });
+
+    // 进程仍在运行：标记停止并等待 close 事件，确保 close 处理器在 stopRequested 下
+    // 跳过重试/状态更新，然后再移除标记，避免竞态导致停止后任务复活
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
+      this.stopRequested.add(id);
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        // 3 秒兜底：SIGTERM 未生效则强制 SIGKILL，close 事件必然随后触发
+        const forceKillTimer = setTimeout(() => {
+          try { proc.kill("SIGKILL"); } catch {}
+        }, 3000);
+        proc.once("close", () => {
+          clearTimeout(forceKillTimer);
+          finish();
+        });
+      });
+      this.stopRequested.delete(id);
+    }
+
     this.updateStatus(id, "idle");
+  }
+
+  /** 取消指定任务的增量同步防抖定时器 */
+  private cancelIncrementalSync(id: string) {
+    const timer = this.resetDebounceTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      this.resetDebounceTimers.delete(id);
+    }
+  }
+
+  /** 取消指定任务的失败重试定时器，并解除等待中的同步 Promise（返回 false 表示被中断） */
+  private cancelPendingRetry(id: string) {
+    const pending = this.pendingRetries.get(id);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pending.resolve(false);
+      this.pendingRetries.delete(id);
+    }
   }
 
   /**
@@ -220,34 +267,13 @@ export class SyncManager {
   public async stopAllTasks() {
     logManager.write("global", "正在清理所有同步进程...");
 
-    // 收集所有活跃的 ChildProcess 句柄（持久化 pid 仅用于清除陈旧记录，不用于 kill）
-    const procs = Array.from(this.activeProcesses.values());
+    // 覆盖所有持久化任务 + 仍活跃的进程/重试
+    const ids = new Set<string>(syncStore.getTasks().map(t => t.id));
+    this.activeProcesses.forEach((_, id) => ids.add(id));
+    this.pendingRetries.forEach((_, id) => ids.add(id));
 
-    // 1. 停止所有定时器
-    this.timers.forEach(timer => clearInterval(timer));
-    this.timers.clear();
-
-    // 2. 发送 SIGTERM 信号（通过句柄，避免 PID 复用误杀）
-    procs.forEach(p => {
-      try { p.kill("SIGTERM"); } catch {}
-    });
-
-    // 3. 等待 500ms 后检查并强制清理仍存活的句柄
-    await new Promise(resolve => setTimeout(resolve, 500));
-    procs.forEach(p => {
-      // 仍在运行（未收到 exit 事件）则强制终止
-      if (p.exitCode === null && p.signalCode === null) {
-        try {
-          p.kill("SIGKILL");
-          console.log(`[清理] 强制终止残留进程: ${p.pid}`);
-        } catch {}
-      }
-    });
-
-    this.activeProcesses.clear();
-    syncStore.getTasks().forEach(t => {
-      if (t.pid) syncStore.updateTask(t.id, { pid: undefined, status: "idle" });
-    });
+    // 并发停止；stopTask 内部负责 SIGTERM → 等待 close → SIGKILL 兜底，并清理各任务定时器
+    await Promise.all([...ids].map(id => this.stopTask(id)));
   }
 
   private handleOffline(task: SyncTask) {
@@ -265,6 +291,8 @@ export class SyncManager {
   private setupScheduled(task: SyncTask) {
     const intervalMs = (task.interval || 5) * 60 * 1000;
     const timer = setInterval(() => {
+      // 手动批量同步进行中：跳过定时触发，避免在分块同步的间隙并发
+      if (this.isManualSyncing.get(task.id)) return;
       if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
         this.handleOffline(task);
         return;
@@ -289,17 +317,17 @@ export class SyncManager {
    * @param specificPaths 如果提供，则只同步这些特定的相对路径
    * @param overrideDirection 如果提供，则临时覆盖同步方向（用于单向同步）
    */
-  private runUnison(task: SyncTask, specificPaths?: string[], overrideDirection?: "sourceToTarget" | "targetToSource", retryCount: number = 0): Promise<void> {
-    // 返回的 Promise 在进程真正结束（或提前中止）时才 resolve，
-    // 以便调用方可以 await 等待本次同步完成（如批量分块同步）。
-    let onDone: () => void = () => {};
-    const exitPromise = new Promise<void>((resolve) => { onDone = resolve; });
+  private runUnison(task: SyncTask, specificPaths?: string[], overrideDirection?: "sourceToTarget" | "targetToSource", retryCount: number = 0): Promise<boolean> {
+    // 返回的 Promise 在本次同步真正完成（含重试链路）或提前中止时才 resolve。
+    // true = 完整执行完；false = 被停止/离线/仍在并发中被跳过，调用方应中止后续分批。
+    let onDone: (ok: boolean) => void = () => {};
+    const exitPromise = new Promise<boolean>((resolve) => { onDone = resolve; });
 
-    if (this.activeProcesses.has(task.id)) return Promise.resolve();
+    if (this.activeProcesses.has(task.id)) return Promise.resolve(false);
 
     if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
       this.handleOffline(task);
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
 
     // 检测路径冲突：解析 symlink 后再比较，防止以下两种危险情况：
@@ -312,14 +340,14 @@ export class SyncManager {
     } catch {
       // realpathSync 失败说明路径无法解析（断链 symlink 等），当作离线处理
       this.handleOffline(task);
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
     if (srcReal === tgtReal) {
       const errMsg = `路径配置错误：源目录与目标目录解析后指向同一真实路径，拒绝同步。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
       console.error(errMsg);
       logManager.write(task.id, `[错误] ${errMsg}`);
       this.updateStatus(task.id, "error");
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
     const srcNorm = srcReal.endsWith(path.sep) ? srcReal : srcReal + path.sep;
     const tgtNorm = tgtReal.endsWith(path.sep) ? tgtReal : tgtReal + path.sep;
@@ -328,22 +356,20 @@ export class SyncManager {
       console.error(errMsg);
       logManager.write(task.id, `[错误] ${errMsg}`);
       this.updateStatus(task.id, "error");
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
 
     this.updateStatus(task.id, "syncing");
 
     const args = [
       "-batch",
-      "-terse", 
+      "-terse",
       "-copyonconflict",
       "-ignoreinodenumbers",
-      "-fat",
       "-dontchmod",
-      "-perms", "0",
+      "-perms", "0", // 必须与 -dontchmod 搭配：unison 要求 dontchmod 时 perms=0，否则拒绝启动 (exit 3)
       "-owner=false",
       "-group=false",
-      "-xferbycopying",
       "-fastcheck=true",
       "-ui", "text",
       "-ignore", "Name .*",
@@ -352,23 +378,26 @@ export class SyncManager {
       "-ignore", "Name desktop.ini",
       "-ignore", "Path .wizsync", // 强制忽略本地元数据目录
       "-label", task.name,
-      "-ignorelocks",
-      "-retry", "3",
       "-confirmbigdel=false", // 自动确认大批量删除，防止挂起
     ];
+
+    // FAT 文件系统兼容（默认开启，面向 FAT/exFAT 移动卷；大小写敏感卷可关闭）
+    if (task.useFat !== false) args.push("-fat");
 
     // 根据同步方向优化策略
     const currentDirection = overrideDirection || task.direction;
 
     if (currentDirection === "sourceToTarget") {
-      args.push("-prefer", task.sourcePath);
+      // 单向 = 强镜像：-force 让源端在所有差异（含删除）中获胜。
+      // 该版本 unison 对本地同步不启用锁保护，并发安全完全由应用的
+      // 单飞守卫 + 跨任务重叠校验保证，因此不再需要 -ignorelocks。
+      // 注意：-force 下 -prefer 无额外作用，不再重复传入。
       args.push("-force", task.sourcePath);
       // 单向同步也需传播时间戳：让 -fastcheck 能用 size+mtime 判定一致。
       // 若用 -times=false，目标端 mtime 永远是"现在"，与源端不符，
       // 每次同步都会触发全量内容哈希比对，表现为"永远同步不完/很慢"。
       args.push("-times");
     } else if (currentDirection === "targetToSource") {
-      args.push("-prefer", task.targetPath);
       args.push("-force", task.targetPath);
       args.push("-times");
     } else {
@@ -387,6 +416,8 @@ export class SyncManager {
         args.push("-backuplocation", "central");
         args.push("-backupdir", task.backupPath);
         args.push("-backupprefix", "bak.$VERSION.");
+        // 注：unison 2.53.8 不支持 -backupdel；凡命中 -backup 模式的文件，
+        // 无论更新还是删除都会默认写入备份目录，无需额外参数。
       } catch (err) {
         console.error("创建备份目录失败:", err);
       }
@@ -432,7 +463,7 @@ export class SyncManager {
       console.warn(errMsg);
       logManager.write(task.id, `[中止] ${errMsg}`);
       this.updateStatus(task.id, "error");
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
 
     const proc = spawn(unisonPath, args, { env });
@@ -447,9 +478,13 @@ export class SyncManager {
     proc.on("error", (err: any) => {
       this.activeProcesses.delete(task.id);
       syncStore.updateTask(task.id, { pid: undefined });
-      logManager.write(task.id, `启动失败: ${err.message}`);
+      if (this.stopRequested.has(task.id)) {
+        onDone(false);
+        return;
+      }
+      logManager.write(task.id, `启动失败 (${unisonPath}): ${err.message}`);
       this.updateStatus(task.id, "error");
-      onDone();
+      onDone(false);
     });
 
     let outputBuffer = "";
@@ -533,28 +568,41 @@ export class SyncManager {
       this.activeProcesses.delete(task.id);
       syncStore.updateTask(task.id, { pid: undefined });
 
+      // 任务被主动停止：不重试、不更新状态，直接结束本次同步
+      if (this.stopRequested.has(task.id)) {
+        onDone(false);
+        return;
+      }
+
       if (code !== 0 && needsRetry) {
         if (retryCount >= 3) {
           const msg = `[错误] 连续重试 ${retryCount} 次后仍然失败，已停止重试。请检查日志或手动处理。`;
           logManager.write(task.id, msg);
           this.win?.webContents.send("sync-log", { id: task.id, log: msg });
           this.updateStatus(task.id, "error");
-          onDone();
+          onDone(false);
           return;
         }
 
-        const msg = `[自动重试] 增量同步准备就绪，1 秒后扫描以确认最终状态... (重试次数: ${retryCount + 1}/3)`;
+        const msg = `[自动重试] 检测到同步未完成，1 秒后自动重试... (重试次数: ${retryCount + 1}/3)`;
         logManager.write(task.id, msg);
         this.win?.webContents.send("sync-log", { id: task.id, log: msg });
-        setTimeout(() => {
-          const tasks = syncStore.getTasks();
-          const currentTask = tasks.find(t => t.id === task.id);
-          if (currentTask) this.runUnison(currentTask, specificPaths, overrideDirection, retryCount + 1);
+
+        // 登记重试定时器（可被 stopTask 取消），并在重试真正完成后才解析本次同步，
+        // 避免分批同步时出现“假成功”；重试被取消/跳过时 resolve(false) 让调用方中止剩余批次。
+        const timer = setTimeout(() => {
+          this.pendingRetries.delete(task.id);
+          const currentTask = syncStore.getTasks().find(t => t.id === task.id);
+          if (currentTask) {
+            this.runUnison(currentTask, specificPaths, overrideDirection, retryCount + 1).then(onDone);
+          } else {
+            onDone(false);
+          }
         }, 1000);
-        onDone();
+        this.pendingRetries.set(task.id, { timer, resolve: onDone });
         return;
       }
-      
+
       const status = code === 0 ? "idle" : "error";
       const lastSyncTime = new Date().toLocaleString();
       
@@ -592,7 +640,7 @@ export class SyncManager {
 
       logManager.write(task.id, `同步结束 (代码: ${code})${hasChanges ? " [有变动]" : " [无变动]"}`);
       this.onStatusChange?.();
-      onDone();
+      onDone(true);
     });
 
     return exitPromise;

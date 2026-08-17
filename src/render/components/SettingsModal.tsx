@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { X, Settings, FolderOpen, Database } from "lucide-react";
+import { X, Settings, FolderOpen, Database, LogOut } from "lucide-react";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -23,6 +23,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
   const handleOpenFolder = () => {
     window.electronAPI.openAppDataFolder();
+  };
+
+  /**
+   * 退出应用：先确认，再触发主进程清理所有同步任务与进程后退出。
+   */
+  const handleQuit = async () => {
+    if (
+      !(await window.electronAPI.showConfirm(
+        "确定要退出应用吗？\n\n退出前将停止所有同步任务与同步进程。",
+      ))
+    ) {
+      return;
+    }
+    await window.electronAPI.quitApp();
   };
 
   return (
@@ -74,6 +88,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               <FolderOpen size={14} />
               打开目录
             </button>
+          </div>
+        </div>
+
+        {/* 退出应用 */}
+        <div className="mt-6 border-t border-slate-100">
+          <div className="px-6 pt-6 pb-6">
+            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">
+              退出
+            </h3>
+            <div className="flex items-center justify-between gap-4 bg-red-50/60 rounded-xl px-4 py-3.5 border border-red-100">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <LogOut size={18} className="text-red-600" />
+                </div>
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-700 text-sm">退出应用</div>
+                  <div className="text-xs text-slate-500">停止所有同步任务与进程后退出</div>
+                </div>
+              </div>
+              <button
+                onClick={handleQuit}
+                className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex-shrink-0 shadow-sm shadow-red-200"
+              >
+                <LogOut size={14} />
+                退出
+              </button>
+            </div>
           </div>
         </div>
       </div>

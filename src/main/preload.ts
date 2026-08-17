@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openLogFolder: (id: string) => ipcRenderer.invoke('open-log-folder', id),
   getAppDataPath: () => ipcRenderer.invoke('get-app-data-path'),
   openAppDataFolder: () => ipcRenderer.invoke('open-app-data-folder'),
+  quitApp: () => ipcRenderer.invoke('quit-app'),
   getIgnorePatterns: () => ipcRenderer.invoke('get-ignore-patterns'),
   getDefaultBackupPath: (taskId: string) => ipcRenderer.invoke('get-default-backup-path', taskId),
   listBackupFiles: (taskId: string) => ipcRenderer.invoke('list-backup-files', taskId),

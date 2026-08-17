@@ -9,6 +9,7 @@ export interface SyncTask {
   status: 'idle' | 'syncing' | 'error'
   lastSyncTime?: string
   useParallel?: boolean
+  useFat?: boolean
   sourceStats?: { size: number; count: number }
   targetStats?: { size: number; count: number }
   sourceDisk?: { name: string; total: number; free: number }
@@ -51,6 +52,7 @@ export interface ElectronAPI {
   openLogFolder: (id: string) => Promise<boolean>
   getAppDataPath: () => Promise<string>
   openAppDataFolder: () => Promise<boolean>
+  quitApp: () => Promise<boolean>
   getIgnorePatterns: () => Promise<string[]>
   getDefaultBackupPath: (taskId: string) => Promise<string>
   listBackupFiles: (taskId: string) => Promise<BackupFile[]>

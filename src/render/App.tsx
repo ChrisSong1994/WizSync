@@ -109,7 +109,14 @@ function App() {
         }
       }
 
-      const updatedTasks = await window.electronAPI.saveTask(currentTask as SyncTask);
+      let updatedTasks: SyncTask[];
+      try {
+        updatedTasks = await window.electronAPI.saveTask(currentTask as SyncTask);
+      } catch (err: any) {
+        // 主进程校验（如跨任务根目录重叠）失败时把错误展示在表单里
+        setModalError(err?.message || "保存失败，请重试。");
+        return;
+      }
       setTasks(updatedTasks);
       setIsModalOpen(false);
       setCurrentTask(null);

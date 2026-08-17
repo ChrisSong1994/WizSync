@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, session } from "electron";
 import path from "node:path";
 import fs from "node:fs";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
@@ -66,6 +67,20 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 let win: BrowserWindow | null = null;
 let isQuitting = false;
 const trayManager = new TrayManager(APP_ROOT);
+
+// 单实例锁：防止两个实例同时运行，避免同一批同步根目录被并发写入
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+  });
+}
 
 /**
  * 创建主窗口
@@ -139,6 +154,9 @@ app.on("before-quit", async (e) => {
 });
 
 app.whenReady().then(() => {
+  // 非主实例（被单实例锁拒绝）直接退出，不再初始化
+  if (!gotSingleInstanceLock) return;
+
   // 生产环境注入 CSP：仅在打包模式下生效，避免影响 vite dev（HMR 需要内联脚本与 ws 连接）
   if (app.isPackaged) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -158,6 +176,9 @@ app.whenReady().then(() => {
 
   // 应用启动后自动执行所有非手动任务
   setTimeout(() => {
+    // 清理上次异常退出残留的 Unison 孤儿进程，避免其与本次启动的同步进程并发写入同一批根目录
+    cleanupOrphanedUnison();
+
     const tasks = syncStore.getTasks();
 
     // 清理超过保留期的备份文件（递归，跳过隐藏文件；保留期默认 30 天，任务可配置）
@@ -214,6 +235,66 @@ function getRetentionMs(task: SyncTask): number {
   return days * 24 * 60 * 60 * 1000;
 }
 
+/**
+ * 清理上次异常退出残留的 Unison 孤儿进程。
+ * 通过匹配进程环境变量 UNISON=<userData>/task-data/<taskId>/unison 识别（由 sync-manager 注入）。
+ * 仅在应用启动时（尚未派生任何同步进程）调用，因此命中的必然不是本实例的子进程。
+ */
+function cleanupOrphanedUnison() {
+  const marker = path.join(app.getPath("userData"), "task-data");
+  try {
+    const out = execSync("ps eww -axo pid=,command=", {
+      encoding: "utf-8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    let killed = 0;
+    for (const line of out.split("\n")) {
+      if (!line.includes("unison")) continue;
+      if (!line.includes(marker)) continue;
+      const pid = Number(line.trim().split(/\s+/)[0]);
+      if (!Number.isInteger(pid) || pid <= 1) continue;
+      try {
+        process.kill(pid, "SIGKILL");
+        killed++;
+      } catch {}
+    }
+    if (killed > 0) console.log(`[清理] 已终止 ${killed} 个残留 Unison 进程`);
+  } catch (err) {
+    console.error("[清理] 孤儿进程扫描失败:", err);
+  }
+}
+
+/** 将路径解析为可用于重叠比较的规范形式（realpath 优先，失败回退到绝对路径） */
+function canonicalRoot(p: string): string {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+/** 判断两个根目录是否重叠（相等或存在父子嵌套关系，含 symlink 解析） */
+function rootsOverlap(a: string, b: string): boolean {
+  const ca = canonicalRoot(a);
+  const cb = canonicalRoot(b);
+  if (ca === cb) return true;
+  const aWithSep = ca.endsWith(path.sep) ? ca : ca + path.sep;
+  const bWithSep = cb.endsWith(path.sep) ? cb : cb + path.sep;
+  return aWithSep.startsWith(bWithSep) || bWithSep.startsWith(aWithSep);
+}
+
+/** 检查新任务与现有任务是否存在根目录重叠，返回错误信息或 null */
+function findRootConflict(task: SyncTask): string | null {
+  const tasks = syncStore.getTasks();
+  for (const existing of tasks) {
+    if (existing.id === task.id) continue; // 编辑自身时跳过
+    for (const np of [task.sourcePath, task.targetPath]) {
+      for (const ep of [existing.sourcePath, existing.targetPath]) {
+        if (rootsOverlap(np, ep)) {
+          return `路径冲突：目录 "${np}" 与任务 "${existing.name}" 的 "${ep}" 存在重叠（含 symlink 解析）。为避免两个任务并发写入同一目录，已拒绝保存。`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /** 当前 compare 扫描的取消控制器（一次只允许一个对比进行） */
 let compareController: AbortController | null = null;
 
@@ -248,6 +329,10 @@ ipcMain.handle("get-default-backup-path", (_event, taskId: string) => {
 });
 
 ipcMain.handle("save-task", async (_event, task: SyncTask) => {
+  // 跨任务根目录重叠校验（realpath 解析，防 symlink 别名/父子嵌套导致的并发写入）
+  const rootConflict = findRootConflict(task);
+  if (rootConflict) throw new Error(rootConflict);
+
   if (!task.backupPath && task.targetPath) {
     task.backupPath = path.join(task.targetPath, ".wizsync", "backups");
   }
@@ -404,6 +489,16 @@ ipcMain.handle("open-app-data-folder", async () => {
   return true;
 });
 
+/**
+ * 退出应用（渲染进程"退出"按钮触发）。
+ * 直接走 app.quit()，由 before-quit 的统一流程负责停止所有同步进程、
+ * 取消定时器与待重试后再真正退出，保证与 Cmd+Q 走同一条清理路径。
+ */
+ipcMain.handle("quit-app", () => {
+  app.quit();
+  return true;
+});
+
 ipcMain.handle("open-backup-folder", (_event, id: string) => {
   const tasks = syncStore.getTasks();
   const task = tasks.find((t) => t.id === id);
@@ -555,7 +650,8 @@ ipcMain.handle(
       const CHUNK_SIZE = 400;
       for (let i = 0; i < filePaths.length; i += CHUNK_SIZE) {
         const chunk = filePaths.slice(i, i + CHUNK_SIZE);
-        await syncManager.runSpecificPathSync(task, chunk, direction);
+        const ok = await syncManager.runSpecificPathSync(task, chunk, direction);
+        if (!ok) break; // 任务被停止/离线，中止剩余批次
       }
       return true;
     } catch (err: any) {

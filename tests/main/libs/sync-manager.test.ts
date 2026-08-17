@@ -149,13 +149,13 @@ describe("SyncManager 手动同步标记", () => {
 });
 
 describe("SyncManager.startTask 校验逻辑", () => {
-  it("源目录不存在时标记 error 且不启动进程", () => {
+  it("源目录不存在时标记 error 且不启动进程", async () => {
     const task = makeTask("t-offline", {
       sourcePath: path.join(tmpDir, "no-src"),
       targetPath: path.join(tmpDir, "tgt"),
     });
 
-    manager.startTask(task);
+    await manager.startTask(task);
 
     expect(updateTaskSpy).toHaveBeenLastCalledWith("t-offline", { status: "error" });
     expect(spawn).not.toHaveBeenCalled();
@@ -165,10 +165,10 @@ describe("SyncManager.startTask 校验逻辑", () => {
     );
   });
 
-  it("源与目标解析为同一真实路径时拒绝同步", () => {
+  it("源与目标解析为同一真实路径时拒绝同步", async () => {
     const task = makeTask("t-same", { sourcePath: tmpDir, targetPath: tmpDir });
 
-    manager.startTask(task);
+    await manager.startTask(task);
 
     expect(updateTaskSpy).toHaveBeenLastCalledWith("t-same", { status: "error" });
     expect(spawn).not.toHaveBeenCalled();
@@ -178,12 +178,12 @@ describe("SyncManager.startTask 校验逻辑", () => {
     );
   });
 
-  it("源与目标存在嵌套关系时拒绝同步", () => {
+  it("源与目标存在嵌套关系时拒绝同步", async () => {
     const src = path.join(tmpDir, "src");
     const tgt = path.join(src, "sub");
     fs.mkdirSync(tgt, { recursive: true });
 
-    manager.startTask(makeTask("t-nested", { sourcePath: src, targetPath: tgt }));
+    await manager.startTask(makeTask("t-nested", { sourcePath: src, targetPath: tgt }));
 
     expect(updateTaskSpy).toHaveBeenLastCalledWith("t-nested", { status: "error" });
     expect(spawn).not.toHaveBeenCalled();
@@ -191,9 +191,9 @@ describe("SyncManager.startTask 校验逻辑", () => {
 });
 
 describe("SyncManager Unison 参数构建", () => {
-  it("双向同步：基础参数、prefer newer、忽略规则与根目录", () => {
+  it("双向同步：基础参数、prefer newer、忽略规则与根目录", async () => {
     const { src, tgt } = makeDirs();
-    manager.startTask(makeTask("t-bi", { sourcePath: src, targetPath: tgt }));
+    await manager.startTask(makeTask("t-bi", { sourcePath: src, targetPath: tgt }));
 
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(mockedSpawn.mock.calls[0][0]).toBe("/usr/bin/fake-unison");
@@ -214,38 +214,40 @@ describe("SyncManager Unison 参数构建", () => {
     finishLastProc();
   });
 
-  it("sourceToTarget 单向同步：-force/-prefer 指向源目录并传播时间戳", () => {
+  it("sourceToTarget 单向同步：-force 指向源目录并传播时间戳（不含 -prefer）", async () => {
     const { src, tgt } = makeDirs();
-    manager.startTask(
+    await manager.startTask(
       makeTask("t-s2t", { sourcePath: src, targetPath: tgt, direction: "sourceToTarget" })
     );
 
     const args = lastArgs();
     expect(args).toContain("-force");
     expect(args[args.indexOf("-force") + 1]).toBe(src);
-    expect(args).toContain("-prefer");
-    expect(args[args.indexOf("-prefer") + 1]).toBe(src);
+    // -force 已覆盖 -prefer，单向同步不再重复传 -prefer
+    expect(args).not.toContain("-prefer");
     expect(args).toContain("-times");
 
     finishLastProc();
   });
 
-  it("配置备份目录时添加 -backup 相关参数", () => {
+  it("配置备份目录时添加 -backup 相关参数", async () => {
     const { src, tgt } = makeDirs();
     const bak = path.join(tmpDir, "backups");
-    manager.startTask(makeTask("t-bak", { sourcePath: src, targetPath: tgt, backupPath: bak }));
+    await manager.startTask(makeTask("t-bak", { sourcePath: src, targetPath: tgt, backupPath: bak }));
 
     const args = lastArgs();
     expect(args).toContain("-backup");
     expect(args).toContain("-backupdir");
     expect(args[args.indexOf("-backupdir") + 1]).toBe(bak);
+    // unison 2.53.8 不支持 -backupdel，且命中备份模式的文件删除时本就默认进备份
+    expect(args).not.toContain("-backupdel");
 
     finishLastProc();
   });
 
-  it("自定义忽略路径转换为 -ignore Path 参数", () => {
+  it("自定义忽略路径转换为 -ignore Path 参数", async () => {
     const { src, tgt } = makeDirs();
-    manager.startTask(
+    await manager.startTask(
       makeTask("t-ig", { sourcePath: src, targetPath: tgt, ignoredPaths: ["a/b", "c.txt"] })
     );
 
@@ -259,15 +261,29 @@ describe("SyncManager Unison 参数构建", () => {
     finishLastProc();
   });
 
-  it("启用多线程时添加 -maxthreads 10", () => {
+  it("启用多线程时添加 -maxthreads 10", async () => {
     const { src, tgt } = makeDirs();
-    manager.startTask(
+    await manager.startTask(
       makeTask("t-par", { sourcePath: src, targetPath: tgt, useParallel: true })
     );
 
     const args = lastArgs();
     expect(args).toContain("-maxthreads");
     expect(args[args.indexOf("-maxthreads") + 1]).toBe("10");
+
+    finishLastProc();
+  });
+
+  it("FAT 兼容默认开启，useFat=false 时移除 -fat", async () => {
+    const { src, tgt } = makeDirs();
+
+    await manager.startTask(makeTask("t-fat-on", { sourcePath: src, targetPath: tgt }));
+    expect(lastArgs()).toContain("-fat");
+
+    finishLastProc();
+
+    await manager.startTask(makeTask("t-fat-off", { sourcePath: src, targetPath: tgt, useFat: false }));
+    expect(lastArgs()).not.toContain("-fat");
 
     finishLastProc();
   });
@@ -296,7 +312,7 @@ describe("SyncManager 调度逻辑", () => {
     const task = makeTask("t-deb", { sourcePath: src, targetPath: tgt });
     syncStore.saveTask(task);
 
-    const startSpy = vi.spyOn(manager, "startTask").mockImplementation(() => {});
+    const startSpy = vi.spyOn(manager, "startTask").mockImplementation(async () => {});
 
     manager.requestIncrementalSync("t-deb");
     manager.requestIncrementalSync("t-deb");
@@ -310,11 +326,11 @@ describe("SyncManager 调度逻辑", () => {
     expect(startSpy).toHaveBeenCalledWith(task);
   });
 
-  it("stopTask 清理 pid 并置状态为 idle", () => {
+  it("stopTask 清理 pid 并置状态为 idle", async () => {
     const task = makeTask("t-stop", { sourcePath: tmpDir, targetPath: tmpDir, pid: 12345 });
     syncStore.saveTask(task);
 
-    manager.stopTask("t-stop");
+    await manager.stopTask("t-stop");
 
     expect(updateTaskSpy).toHaveBeenCalledWith("t-stop", { pid: undefined });
     expect(updateTaskSpy).toHaveBeenLastCalledWith("t-stop", { status: "idle" });

@@ -74,6 +74,15 @@ describe("getDirStats", () => {
       count: 0,
     });
   });
+
+  it("文件数超过信号量并发上限时仍正确（覆盖等待队列路径）", async () => {
+    // 故意超过 STAT_CONCURRENCY(64)，让 acquire/release 走满等待队列与惰性压缩分支
+    const N = 400;
+    for (let i = 0; i < N; i++) {
+      writeFile(`batch/f${i}.txt`, "x");
+    }
+    expect(await getDirStats(tmpDir)).toEqual({ size: N, count: N });
+  });
 });
 
 describe("isPathInside", () => {

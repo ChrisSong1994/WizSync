@@ -192,6 +192,34 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </label>
           </div>
 
+          {/* FAT 兼容开关（默认开启） */}
+          <div className="pt-2">
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <div
+                onClick={() => onChange({ useFat: currentTask?.useFat === false })}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative flex items-center px-1",
+                  currentTask?.useFat !== false ? "bg-blue-600" : "bg-slate-200",
+                )}
+              >
+                <div
+                  className={cn(
+                    "w-4 h-4 bg-white rounded-full shadow-sm transition-all transform",
+                    currentTask?.useFat !== false ? "translate-x-6" : "translate-x-0",
+                  )}
+                />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-slate-700">
+                  FAT 文件系统兼容
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  目标为 U 盘等 FAT/exFAT 卷时保持开启；大小写敏感卷可关闭
+                </span>
+              </div>
+            </label>
+          </div>
+
           {/* 备份保留期 */}
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-slate-700 ml-1">

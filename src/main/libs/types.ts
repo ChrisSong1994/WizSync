@@ -9,6 +9,7 @@ export interface SyncTask {
   status: "idle" | "syncing" | "error";
   lastSyncTime?: string;
   useParallel?: boolean;
+  useFat?: boolean; // FAT 文件系统兼容；默认开启（undefined 视为开启）
   sourceStats?: { size: number; count: number };
   targetStats?: { size: number; count: number };
   sourceDisk?: { name: string; total: number; free: number };
