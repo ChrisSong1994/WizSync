@@ -19,6 +19,7 @@ import {
 import { SyncTask } from "../types";
 import { cn, formatSize } from "../utils";
 import { Tooltip } from "./Tooltip";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 interface TaskItemProps {
   task: SyncTask;
@@ -42,6 +43,8 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   const [deleting, setDeleting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  // 前端确认弹窗：'delete' | 'reset'，null 表示未打开
+  const [confirmAction, setConfirmAction] = useState<"delete" | "reset" | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -58,30 +61,34 @@ export const TaskItem: React.FC<TaskItemProps> = ({
     window.electronAPI.revealInFileExplorer(task.id, "", side);
   };
 
-  const handleDeleteClick = async () => {
+  // 打开前端确认弹窗（真正的删除/重置动作在 confirmDelete / confirmReset 中执行）
+  const handleDeleteClick = () => {
     setShowMenu(false);
-    if (
-      !(await window.electronAPI.showConfirm(
-        `确定要删除任务「${task.name}」吗？\n此操作将停止同步并清理相关进程。`,
-      ))
-    )
-      return;
-    setDeleting(true);
-    await onDeleteTask(task.id);
+    setConfirmAction("delete");
   };
 
-  const handleReset = async () => {
-    if (
-      !(await window.electronAPI.showConfirm(
-        `确定要强制重置任务「${task.name}」吗？\n这将清理同步缓存并重新扫描所有文件，通常用于解决顽固报错。`,
-      ))
-    )
-      return;
+  const handleReset = () => {
+    setShowMenu(false);
+    setConfirmAction("reset");
+  };
+
+  const confirmDelete = async () => {
+    setDeleting(true);
+    try {
+      await onDeleteTask(task.id);
+    } finally {
+      setDeleting(false);
+      setConfirmAction(null);
+    }
+  };
+
+  const confirmReset = async () => {
     setResetting(true);
     try {
       await window.electronAPI.resetSync(task.id);
     } finally {
       setResetting(false);
+      setConfirmAction(null);
     }
   };
 
@@ -93,9 +100,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({
       : diskDisconnected
         ? "磁盘未连接，无法对比"
         : "对比两个目录的差异";
-  const resetTooltip = diskDisconnected
-    ? "磁盘未连接，无法重置"
-    : "强制重置，清理缓存后重新扫描";
   const syncTooltip =
     task.status === "syncing"
       ? "停止同步"
@@ -103,8 +107,10 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         ? "磁盘未连接，无法同步"
         : "开始同步";
 
+  // 注意：卡片上不能加 overflow-hidden，否则右下角 More 的下拉菜单会被卡片裁掉
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow overflow-hidden group">
+    <>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow group">
       <div className="p-5 flex items-center gap-6">
         {/* 状态指示器 */}
         <div className="flex-shrink-0 relative">
@@ -273,32 +279,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               <FileSearch size={20} />
             </button>
           </Tooltip>
-          <Tooltip content="查看备份数据">
-            <button
-              onClick={() => onShowBackup(task.id)}
-              className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
-            >
-              <Archive size={20} />
-            </button>
-          </Tooltip>
-          <Tooltip content={resetTooltip}>
-            <button
-              onClick={handleReset}
-              disabled={task.status === "syncing" || resetting || diskDisconnected}
-              className={cn(
-                "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-                task.status === "syncing" || resetting || diskDisconnected
-                  ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                  : "bg-amber-50 text-amber-600 hover:bg-amber-100",
-              )}
-            >
-              {resetting ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <RotateCcw size={20} />
-              )}
-            </button>
-          </Tooltip>
           <Tooltip content={syncTooltip}>
             <button
               onClick={() => onToggleSync(task)}
@@ -327,30 +307,64 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               <Edit3 size={20} />
             </button>
           </Tooltip>
-          <Tooltip content="删除任务">
-            <button
-              onClick={handleDeleteClick}
-              disabled={deleting}
-              className={cn(
-                "w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95",
-                deleting
-                  ? "bg-red-100 text-red-400 cursor-not-allowed"
-                  : "bg-red-50 text-red-600 hover:bg-red-100",
-              )}
-            >
-              {deleting ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <Trash2 size={20} />
-              )}
-            </button>
-          </Tooltip>
+
+          {/* 更多操作：备份 / 重置 / 删除 */}
+          <div className="relative" ref={menuRef}>
+            <Tooltip content="更多操作">
+              <button
+                onClick={() => setShowMenu((v) => !v)}
+                className="w-11 h-11 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all active:scale-95"
+              >
+                <MoreVertical size={20} />
+              </button>
+            </Tooltip>
+
+            {showMenu && (
+              <div className="absolute right-0 top-full mt-1.5 w-44 bg-white rounded-xl border border-slate-200 shadow-lg z-50 py-1.5">
+                <button
+                  onClick={() => {
+                    setShowMenu(false);
+                    onShowBackup(task.id);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  <Archive size={16} className="text-slate-400" />
+                  查看备份数据
+                </button>
+                <button
+                  onClick={handleReset}
+                  disabled={task.status === "syncing" || resetting || diskDisconnected}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {resetting ? (
+                    <Loader2 size={16} className="animate-spin text-amber-500" />
+                  ) : (
+                    <RotateCcw size={16} className="text-amber-500" />
+                  )}
+                  强制重置
+                </button>
+                <div className="border-t border-slate-100 my-1" />
+                <button
+                  onClick={handleDeleteClick}
+                  disabled={deleting}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {deleting ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Trash2 size={16} />
+                  )}
+                  删除任务
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* 最近同步信息 */}
       {task.lastSyncTime && (
-        <div className="px-5 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+        <div className="px-5 py-2 bg-slate-50 border-t border-slate-100 rounded-b-2xl flex items-center justify-between">
           <span className="text-[12px] text-slate-500 flex items-center gap-1">
             <Clock size={12} />
             最近同步: {task.lastSyncTime}
@@ -364,5 +378,31 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         </div>
       )}
     </div>
+
+    {/* 前端确认弹窗（替代 Electron 原生 dialog） */}
+      {confirmAction === "delete" && (
+        <ConfirmDialog
+          title="删除任务"
+          message={`确定要删除任务「${task.name}」吗？\n此操作将停止同步并清理相关进程。`}
+          confirmText="删除"
+          cancelText="取消"
+          danger
+          loading={deleting}
+          onConfirm={confirmDelete}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
+      {confirmAction === "reset" && (
+        <ConfirmDialog
+          title="强制重置"
+          message={`确定要强制重置任务「${task.name}」吗？\n这将清理同步缓存并重新扫描所有文件，通常用于解决顽固报错。`}
+          confirmText="重置"
+          cancelText="取消"
+          loading={resetting}
+          onConfirm={confirmReset}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
+    </>
   );
 };
