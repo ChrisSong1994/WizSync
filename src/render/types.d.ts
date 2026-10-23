@@ -54,6 +54,8 @@ export interface ElectronAPI {
   getAppVersion: () => Promise<string>
   openAppDataFolder: () => Promise<boolean>
   quitApp: () => Promise<boolean>
+  openDevTools: () => Promise<boolean>
+  forceReload: () => Promise<boolean>
   getIgnorePatterns: () => Promise<string[]>
   getDefaultBackupPath: (taskId: string) => Promise<string>
   listBackupFiles: (taskId: string) => Promise<BackupFile[]>

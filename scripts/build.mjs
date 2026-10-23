@@ -79,7 +79,13 @@ if (!env.ELECTRON_BUILDER_BINARIES_MIRROR) {
 }
 // 保证直接执行 node scripts/build.mjs 时也能找到 .bin 里的工具
 const binDir = path.join(ROOT, "node_modules", ".bin");
-env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+// Windows 下 PowerShell 会把环境变量键写成 "Path"（而非 "PATH"），且对象里同时
+// 存在 "Path"/"PATH" 两个大小写键会导致子进程环境块冲突（PATH 被覆盖成只剩
+// node_modules/.bin，进而 tsc/vite 找不到 node）。这里先取现有值再归一化到 "PATH"。
+const existingPath = env.PATH || env.Path || "";
+delete env.PATH;
+delete env.Path;
+env.PATH = `${binDir}${path.delimiter}${existingPath}`;
 
 function run(cmd, args) {
   console.log(`\n[build] $ ${[cmd, ...args].join(" ")}`);

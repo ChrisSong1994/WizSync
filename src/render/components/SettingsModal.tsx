@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { X, Settings, FolderOpen, Database, LogOut, Info } from "lucide-react";
+import { X, Settings, FolderOpen, Database, LogOut, Info, Code2, RefreshCw } from "lucide-react";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -106,6 +106,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 <div className="text-xs text-slate-500 truncate">
                   当前版本：{appVersion ? `v${appVersion}` : "加载中..."}
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 开发者 */}
+          <div className="mt-8">
+            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">
+              开发者
+            </h3>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-4 bg-slate-50 rounded-xl px-4 py-3.5 border border-slate-100">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Code2 size={18} className="text-blue-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-700 text-sm">开发者工具</div>
+                    <div className="text-xs text-slate-500">打开/关闭 DevTools 调试面板</div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => window.electronAPI.openDevTools()}
+                  className="flex items-center gap-1.5 bg-white hover:bg-blue-50 text-slate-600 hover:text-blue-600 border border-slate-200 px-3 py-2 rounded-lg text-xs font-semibold transition-colors flex-shrink-0"
+                >
+                  <Code2 size={14} />
+                  打开
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between gap-4 bg-slate-50 rounded-xl px-4 py-3.5 border border-slate-100">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <RefreshCw size={18} className="text-blue-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-700 text-sm">强制重新加载</div>
+                    <div className="text-xs text-slate-500">忽略缓存重新加载界面</div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => window.electronAPI.forceReload()}
+                  className="flex items-center gap-1.5 bg-white hover:bg-blue-50 text-slate-600 hover:text-blue-600 border border-slate-200 px-3 py-2 rounded-lg text-xs font-semibold transition-colors flex-shrink-0"
+                >
+                  <RefreshCw size={14} />
+                  重新加载
+                </button>
               </div>
             </div>
           </div>

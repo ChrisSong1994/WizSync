@@ -192,8 +192,7 @@ app.whenReady().then(() => {
     });
   }
 
-  // Windows/Linux 默认菜单（File/Edit/View…）与应用界面不搭，直接移除；
-  // macOS 保留默认菜单以提供 Cmd+Q、复制粘贴等标准快捷键。
+  // Windows/Linux 不使用菜单栏；macOS 保留默认菜单以提供 Cmd+Q、复制粘贴等标准快捷键。
   if (process.platform !== "darwin") {
     Menu.setApplicationMenu(null);
   }
@@ -481,6 +480,33 @@ ipcMain.handle(
   },
 );
 
+/**
+ * 在系统文件管理器中打开/定位路径：
+ * - 目录：直接打开该目录本身（shell.openPath 跨平台打开默认文件管理器）。
+ * - 文件：在文件管理器中定位该文件（macOS/Windows 会选中，Linux 打开其所在目录）。
+ *
+ * 注意：shell.showItemInFolder 传入目录时，Windows/Linux 会打开其父目录而非目录本身，
+ * 因此目录必须走 shell.openPath，否则“定位源/目标目录”不会打开目标目录。
+ */
+async function revealPath(fullPath: string): Promise<boolean> {
+  try {
+    const stat = fs.statSync(fullPath);
+    if (stat.isDirectory()) {
+      const err = await shell.openPath(fullPath);
+      if (err) {
+        console.error(`打开目录失败: ${fullPath} (${err})`);
+        return false;
+      }
+      return true;
+    }
+    shell.showItemInFolder(fullPath);
+    return true;
+  } catch (err) {
+    console.error(`定位路径失败: ${fullPath}`, err);
+    return false;
+  }
+}
+
 ipcMain.handle(
   "reveal-in-explorer",
   async (
@@ -500,23 +526,23 @@ ipcMain.handle(
     const fullPath = path.join(basePath, relPath);
 
     if (fs.existsSync(fullPath)) {
-      shell.showItemInFolder(fullPath);
-      return true;
+      return await revealPath(fullPath);
     }
     return false;
   },
 );
 
-ipcMain.handle("reveal-backup-file", (_event, taskId: string, filePath: string) => {
-  // 只允许揭示属于该任务的备份目录内的文件
-  const task = syncStore.getTasks().find((t) => t.id === taskId);
-  if (!task?.backupPath || !resolveInRoot(task.backupPath, filePath)) return false;
-  if (fs.existsSync(filePath)) {
-    shell.showItemInFolder(filePath);
-    return true;
-  }
-  return false;
-});
+ipcMain.handle(
+  "reveal-backup-file",
+  async (_event, taskId: string, filePath: string) => {
+    // 只允许揭示属于该任务的备份目录内的文件
+    const task = syncStore.getTasks().find((t) => t.id === taskId);
+    if (!task?.backupPath) return false;
+    const fullPath = resolveInRoot(task.backupPath, filePath);
+    if (!fullPath || !fs.existsSync(fullPath)) return false;
+    return await revealPath(fullPath);
+  },
+);
 
 ipcMain.handle("open-log-folder", (_event, id: string) => {
   const dir = logManager.getTaskDir(id);
@@ -548,6 +574,18 @@ ipcMain.handle("open-app-data-folder", async () => {
  */
 ipcMain.handle("quit-app", () => {
   app.quit();
+  return true;
+});
+
+ipcMain.handle("open-devtools", () => {
+  const target = win ?? BrowserWindow.getFocusedWindow();
+  target?.webContents.toggleDevTools();
+  return true;
+});
+
+ipcMain.handle("force-reload", () => {
+  const target = win ?? BrowserWindow.getFocusedWindow();
+  target?.webContents.reloadIgnoringCache();
   return true;
 });
 
