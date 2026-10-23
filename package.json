@@ -1,6 +1,6 @@
 {
   "name": "wizsync",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "description": "Clean and professional directory sync app powered by Unison",
   "main": "dist-electron/main.js",
   "type": "module",
