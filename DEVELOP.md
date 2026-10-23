@@ -63,3 +63,28 @@ WizSync 的同步能力并非从零开发，而是构建在成熟的开源同步
 - **新增功能**: 建议遵循 `main.ts` 保持轻量、逻辑下沉到 `libs/` 的原则。
 - **二进制更新**: 如果需要更新 Unison 版本，请确保替换 `src/resources/bin` 下的所有架构文件并保持执行权限。
 - **调试**: 主进程日志可通过控制台查看，Unison 详细日志可在应用的“查看日志”模态框中实时追踪。
+
+---
+
+## 5. 发布流程 (Release)
+
+发布由 GitHub Actions（`.github/workflows/release.yml`）自动完成，**推送 `v*` 标签即触发**：
+
+```bash
+git tag v1.0.7
+git push origin v1.0.7
+```
+
+工作流会依次执行：
+
+1. 在 `macos-latest` 上按 `arm64` / `x64` 双架构并行构建；
+2. 类型检查（`tsc`）与单元测试（`vitest`）；
+3. 用 `electron-builder` 生成 `.dmg` 与 `.zip`，产物名形如 `WizSync-1.0.7-arm64.dmg`；
+4. 将全部产物上传到同名 GitHub Release，并自动生成 Release Notes。
+
+补充说明：
+
+- 构建时会把 `package.json` 的 `version` 同步为标签去掉 `v` 后的值，因此无需手动改版本号；
+- 标签含 `-`（如 `v1.0.7-beta.1`）会发布为 **Pre-release**；
+- 手动触发（Actions → Release → Run workflow）只构建并上传 Actions 产物，不会创建 Release；
+- 当前工作流未配置代码签名与公证，产物属于未签名版本，用户首次打开需在“系统设置 → 隐私与安全性”中放行；如需正式分发，可补充 `CSC_LINK` / `CSC_KEY_PASSWORD` 及 Apple 公证相关 Secrets。

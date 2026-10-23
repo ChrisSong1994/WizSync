@@ -7,9 +7,9 @@ import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
 import { logManager } from "./libs/logs";
 import { TrayManager } from "./libs/tray";
-import { getDirStats, getAllFiles, filesContentEqual, IGNORE_PATTERNS, resolveInside } from "./libs/fs-utils";
+import { getDirStats, getAllFiles, computeDirDiff, IGNORE_PATTERNS, resolveInside, resolveExistingRelativePath } from "./libs/fs-utils";
 import { diskManager } from "./libs/disk";
-import { SyncTask } from "./libs/types";
+import { SyncTask, DiffResult } from "./libs/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.join(__dirname, "..");
@@ -224,6 +224,23 @@ function resolveInRoot(root: string, relPath: string): string | null {
   return full;
 }
 
+/**
+ * 越界校验 + 修正为磁盘上真实存在的相对路径。
+ *
+ * 对比层按 NFC / 大小写折叠匹配（与 unison 一致），因此给出的相对路径可能与某一端
+ * 磁盘上的字节不一致（典型：源端是 NFD，unison 把目标端写成 NFC）。删除 / 定位 /
+ * 单文件同步必须作用在真实存在的名字上，否则在 exFAT 这类「大小写不敏感但 Unicode
+ * 归一化敏感」的卷上会 ENOENT（操作静默失败）。
+ *
+ * 先做越界校验（安全），再逐段按「精确 → NFC + 小写」解析；都找不到返回 null。
+ */
+function resolveExistingInRoot(root: string, relPath: string): string | null {
+  const full = resolveInRoot(root, relPath);
+  if (!full) return null;
+  if (fs.existsSync(full)) return relPath;
+  return resolveExistingRelativePath(root, relPath);
+}
+
 /** 备份保留天数默认值 */
 const DEFAULT_BACKUP_RETENTION_DAYS = 30;
 
@@ -408,9 +425,11 @@ ipcMain.handle(
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return false;
 
-    // 越界校验：filePath 必须是同步根目录内的相对路径
+    // 越界校验：filePath 必须是同步根目录内的相对路径；
+    // 同时修正为所选端磁盘上真实存在的名字（NFC/大小写可能与对比结果不同）
     const base = direction === "sourceToTarget" ? task.sourcePath : task.targetPath;
-    if (!resolveInRoot(base, filePath)) return false;
+    const relPath = resolveExistingInRoot(base, filePath);
+    if (!relPath) return false;
 
     // 标记正在手动同步，防止触发 Unison 冲突
     syncManager.setManualSyncing(taskId, true);
@@ -419,10 +438,10 @@ ipcMain.handle(
       // 交给 Unison 引擎处理单文件同步
       logManager.write(
         taskId,
-        `[手动同步] 正在通过引擎同步特定文件: ${filePath} (${direction === "sourceToTarget" ? "源→目标" : "目标→源"})`,
+        `[手动同步] 正在通过引擎同步特定文件: ${relPath} (${direction === "sourceToTarget" ? "源→目标" : "目标→源"})`,
       );
 
-      syncManager.runSpecificPathSync(task, [filePath], direction);
+      syncManager.runSpecificPathSync(task, [relPath], direction);
       return true;
     } catch (err: any) {
       console.error("单文件同步启动失败:", err);
@@ -448,9 +467,10 @@ ipcMain.handle(
     if (!task) return false;
 
     const basePath = side === "source" ? task.sourcePath : task.targetPath;
-    // 越界校验，防止揭示同步根目录之外的文件
-    const fullPath = resolveInRoot(basePath, filePath);
-    if (!fullPath) return false;
+    // 越界校验，防止揭示同步根目录之外的文件；并修正为真实存在的名字
+    const relPath = resolveExistingInRoot(basePath, filePath);
+    if (!relPath) return false;
+    const fullPath = path.join(basePath, relPath);
 
     if (fs.existsSync(fullPath)) {
       shell.showItemInFolder(fullPath);
@@ -478,6 +498,11 @@ ipcMain.handle("open-log-folder", (_event, id: string) => {
 });
 
 ipcMain.handle("get-app-data-path", () => app.getPath("userData"));
+
+/**
+ * 当前应用版本号，取自 package.json 的 version 字段（由 electron-builder 打包时写入）。
+ */
+ipcMain.handle("get-app-version", () => app.getVersion());
 
 ipcMain.handle("open-app-data-folder", async () => {
   const dir = app.getPath("userData");
@@ -576,10 +601,11 @@ ipcMain.handle(
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return false;
 
-    // 越界校验，防止删除同步根目录之外的文件
+    // 越界校验，防止删除同步根目录之外的文件；并修正为磁盘上真实存在的名字
     const basePath = side === "source" ? task.sourcePath : task.targetPath;
-    const fullPath = resolveInRoot(basePath, filePath);
-    if (!fullPath) return false;
+    const relPath = resolveExistingInRoot(basePath, filePath);
+    if (!relPath) return false;
+    const fullPath = path.join(basePath, relPath);
 
     // 标记正在手动操作，防止同步引擎干扰
     syncManager.setManualSyncing(taskId, true);
@@ -588,7 +614,7 @@ ipcMain.handle(
       if (fs.existsSync(fullPath)) {
         // 移入废纸篓而非永久删除，提供可恢复性
         await shell.trashItem(fullPath);
-        logManager.write(taskId, `[手动删除] 已删除${side === "source" ? "源端" : "目标端"}文件: ${filePath}（移入废纸篓）`);
+        logManager.write(taskId, `[手动删除] 已删除${side === "source" ? "源端" : "目标端"}文件: ${relPath}（移入废纸篓）`);
         return true;
       }
       return false;
@@ -599,7 +625,7 @@ ipcMain.handle(
     } finally {
       // 释放标记，并仅对删除的路径做 -path 增量同步，避免全量扫描
       syncManager.setManualSyncing(taskId, false);
-      syncManager.requestIncrementalSync(taskId, [filePath]);
+      syncManager.requestIncrementalSync(taskId, [relPath]);
     }
   },
 );
@@ -607,7 +633,8 @@ ipcMain.handle(
 // ---- 批量操作 IPC（一次 Unison 调用处理多个文件，避免逐文件启动进程） ----
 
 /**
- * 批量校验一组相对路径是否都在根目录内；合法时返回解析后的完整路径数组。
+ * 批量校验一组相对路径是否都在根目录内，并修正为磁盘上真实存在的名字。
+ * 合法时返回解析后的完整路径数组；任一越界返回 null。
  */
 function resolvePathsInRoot(root: string, paths: string[]): string[] | null {
   const resolved: string[] = [];
@@ -616,6 +643,25 @@ function resolvePathsInRoot(root: string, paths: string[]): string[] | null {
     const full = resolveInRoot(root, p);
     if (!full) return null;
     resolved.push(full);
+  }
+  return resolved;
+}
+
+/**
+ * resolvePathsInRoot 的"修正版"：把每条相对路径替换成该端磁盘上真实存在的名字，
+ * 供批量删除 / 批量同步使用（对比结果可能因 NFC/大小写折叠与磁盘字节不同）。
+ * 返回 { full, rel } 列表；任一条越界返回 null。
+ */
+function resolveExistingPathsInRoot(
+  root: string,
+  paths: string[],
+): { full: string; rel: string }[] | null {
+  const resolved: { full: string; rel: string }[] = [];
+  for (const p of paths) {
+    if (typeof p !== "string") return null;
+    const rel = resolveExistingInRoot(root, p);
+    if (!rel) return null;
+    resolved.push({ full: path.join(root, rel), rel });
   }
   return resolved;
 }
@@ -630,34 +676,36 @@ ipcMain.handle(
   ) => {
     const tasks = syncStore.getTasks();
     const task = tasks.find((t) => t.id === taskId);
-    if (!task) return false;
-    if (!Array.isArray(filePaths) || filePaths.length === 0) return true;
+    if (!task) return { ok: false };
+    if (!Array.isArray(filePaths) || filePaths.length === 0) return { ok: true };
 
-    // 批量越界校验
+    // 批量越界校验（安全兜底：路径不再逐条传给 unison，但渲染进程传来的仍需校验）
     const base = direction === "sourceToTarget" ? task.sourcePath : task.targetPath;
-    if (!resolvePathsInRoot(base, filePaths)) return false;
+    if (!resolvePathsInRoot(base, filePaths)) return { ok: false };
 
     // 标记正在手动同步，防止触发 Unison 冲突
     syncManager.setManualSyncing(taskId, true);
     try {
+      const sideLabel = direction === "sourceToTarget" ? "源→目标" : "目标→源";
       logManager.write(
         taskId,
-        `[手动同步] 正在通过引擎批量同步 ${filePaths.length} 个文件 (${direction === "sourceToTarget" ? "源→目标" : "目标→源"})`,
+        `[手动同步] 正在以所选端为权威执行全量同步 (${sideLabel})，由 unison 引擎协调差异...`,
       );
 
-      // 分批（每批 400 个 -path），避免单次 exec 参数超过系统 ARG_MAX 限制；
-      // 逐批 await，确保同一时刻只有一个 Unison 进程在跑
-      const CHUNK_SIZE = 400;
-      for (let i = 0; i < filePaths.length; i += CHUNK_SIZE) {
-        const chunk = filePaths.slice(i, i + CHUNK_SIZE);
-        const ok = await syncManager.runSpecificPathSync(task, chunk, direction);
-        if (!ok) break; // 任务被停止/离线，中止剩余批次
-      }
-      return true;
+      // 以 unison 为唯一权威：不再把 Node 对比的路径列表通过 -path 分批喂给 unison
+      // （两者对"什么算差异"的判定不同，可能一致报"无变动"导致空转）。
+      // 改为对整棵树跑一次 unison 协调（方向跟随按钮），同步完成后重新扫描，
+      // 返回协调后的真实差异供渲染进程刷新显示。
+      const ok = await syncManager.runSpecificPathSync(task, undefined, direction);
+      if (!ok) return { ok: false }; // 任务被停止/离线/并发中被跳过
+
+      // 同步完成后重新对比，让展示层反映 unison 协调后的真实状态
+      const diff = await buildDirDiff(task);
+      return { ok: true, diff };
     } catch (err: any) {
-      console.error("批量同步启动失败:", err);
-      logManager.write(taskId, `[错误] 批量同步启动失败: ${err.message}`);
-      return false;
+      console.error("批量同步失败:", err);
+      logManager.write(taskId, `[错误] 批量同步失败: ${err.message}`);
+      return { ok: false };
     } finally {
       // 释放手动同步标记，引擎会自动更新状态
       syncManager.setManualSyncing(taskId, false);
@@ -673,14 +721,14 @@ ipcMain.handle(
     if (!task) return false;
 
     const basePath = side === "source" ? task.sourcePath : task.targetPath;
-    const resolved = resolvePathsInRoot(basePath, filePaths);
+    const resolved = resolveExistingPathsInRoot(basePath, filePaths);
     if (!resolved) return false;
 
     // 标记正在手动操作，防止同步引擎干扰
     syncManager.setManualSyncing(taskId, true);
     try {
       let deleted = 0;
-      for (const full of resolved) {
+      for (const { full } of resolved) {
         try {
           if (fs.existsSync(full)) {
             // 移入废纸篓而非永久删除，提供可恢复性
@@ -702,7 +750,7 @@ ipcMain.handle(
     } finally {
       // 释放标记，并仅对删除的路径做 -path 增量同步，避免全量扫描
       syncManager.setManualSyncing(taskId, false);
-      syncManager.requestIncrementalSync(taskId, filePaths);
+      syncManager.requestIncrementalSync(taskId, resolved.map((r) => r.rel));
     }
   },
 );
@@ -759,6 +807,56 @@ ipcMain.handle(
   },
 );
 
+/**
+ * 计算任务两个目录的差异（Node 全量扫描 + computeDirDiff 比对）。
+ * 作为 unison 协调后的展示层：同步动作以 unison 为准，这里负责把文件系统的
+ * 真实状态呈现给用户，且判定语义与 unison 对齐（useFat 时路径大小写不敏感，
+ * 大小相同 mtime 有差异时比对内容），使"对比差异"与"同步差异"结论一致。
+ * compare-directories 与 sync-files（同步后刷新）共用。
+ * @param sendProgress 扫描进度回调（每 200 文件触发一次）
+ * @param signal 取消信号；abort 后抛出 compare-cancelled
+ */
+async function buildDirDiff(
+  task: SyncTask,
+  sendProgress?: (count: number) => void,
+  signal?: AbortSignal,
+): Promise<DiffResult> {
+  // 并行扫描两个目录，并实时向渲染进程报告进度
+  const [sourceFiles, targetFiles] = await Promise.all([
+    getAllFiles(task.sourcePath, task.sourcePath, { count: 0 }, sendProgress, signal),
+    getAllFiles(task.targetPath, task.targetPath, { count: 0 }, sendProgress, signal),
+  ]);
+
+  // 折叠冲突（同一侧存在仅 Unicode 编码/大小写不同的重名项）：
+  // unison 视为同一文件、重复同步也消不掉，但同步回另一端时会静默覆盖同一目标，
+  // 属于真实数据隐患 —— 汇总后写进任务日志，方便用户手工清理。
+  const collisions: { side: "source" | "target"; keptPath: string; droppedPath: string }[] = [];
+
+  // foldCase 与 sync-manager 传 -fat 的条件保持一致（useFat 默认开启）
+  const diff = await computeDirDiff(sourceFiles, targetFiles, {
+    sourceRoot: task.sourcePath,
+    targetRoot: task.targetPath,
+    ignoredPaths: task.ignoredPaths,
+    foldCase: task.useFat !== false,
+    signal,
+    onFoldedCollision: (info) => collisions.push(info),
+  });
+
+  if (collisions.length > 0) {
+    const MAX_DETAIL = 5;
+    const detail = collisions
+      .slice(0, MAX_DETAIL)
+      .map((c) => `${c.side === "source" ? "源端" : "目标端"} ${c.droppedPath}（与 ${c.keptPath} 同名）`)
+      .join("；");
+    logManager.write(
+      task.id,
+      `[对比] 发现 ${collisions.length} 个仅 Unicode 编码/大小写不同的重名项，unison 视为同一文件、不会同步：${detail}${collisions.length > MAX_DETAIL ? " …" : ""}`,
+    );
+  }
+
+  return diff;
+}
+
 ipcMain.handle("compare-directories", async (event, id: string) => {
   const tasks = syncStore.getTasks();
   const task = tasks.find((t) => t.id === id);
@@ -777,87 +875,7 @@ ipcMain.handle("compare-directories", async (event, id: string) => {
   const signal = compareController.signal;
 
   try {
-    // 并行扫描两个目录，并实时向渲染进程报告进度
-    const [sourceFiles, targetFiles] = await Promise.all([
-      getAllFiles(task.sourcePath, task.sourcePath, { count: 0 }, sendProgress, signal),
-      getAllFiles(task.targetPath, task.targetPath, { count: 0 }, sendProgress, signal),
-    ]);
-
-    const ignoredPaths = task.ignoredPaths || [];
-    const isIgnored = (relPath: string) => {
-      return ignoredPaths.some(p => relPath === p || relPath.startsWith(p + path.sep));
-    };
-
-    const diff = {
-      sourceOnly: [] as any[],
-      targetOnly: [] as any[],
-      different: [] as any[],
-      renamed: [] as any[],
-      ignored: [] as any[],
-    };
-
-    let processedCount = 0;
-    for (const [relPath, sInfo] of sourceFiles) {
-      if (isIgnored(relPath)) {
-        diff.ignored.push({ path: relPath, size: sInfo.size, side: targetFiles.has(relPath) ? 'both' : 'source' });
-        continue;
-      }
-
-      const tInfo = targetFiles.get(relPath);
-      if (!tInfo) {
-        diff.sourceOnly.push({ path: relPath, size: sInfo.size, mtime: sInfo.mtime });
-      } else if (sInfo.size !== tInfo.size) {
-        // 大小不同：一定需要同步
-        diff.different.push({
-          path: relPath,
-          sourceSize: sInfo.size,
-          targetSize: tInfo.size,
-          sourceMtime: sInfo.mtime,
-          targetMtime: tInfo.mtime,
-        });
-      } else if (Math.abs(sInfo.mtime - tInfo.mtime) > 2000) {
-        // 大小相同但 mtime 差超过容差：FAT/APFS 时间戳精度噪音常见，仅靠 mtime
-        // 会把内容一致的文件误报为"不同"。流式比对内容，与 unison 的判定保持一致
-        // （unison 在 fastcheck 判定 mtime 有差异后也会走内容比对）。
-        if (signal.aborted) throw new Error("compare-cancelled");
-        const sameContent = await filesContentEqual(
-          path.join(task.sourcePath, relPath),
-          path.join(task.targetPath, relPath),
-        );
-        if (!sameContent) {
-          diff.different.push({
-            path: relPath,
-            sourceSize: sInfo.size,
-            targetSize: tInfo.size,
-            sourceMtime: sInfo.mtime,
-            targetMtime: tInfo.mtime,
-          });
-        }
-      }
-
-      if (signal.aborted) throw new Error("compare-cancelled");
-      processedCount++;
-      if (processedCount % 500 === 0) {
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-    }
-
-    for (const [relPath, tInfo] of targetFiles) {
-      if (sourceFiles.has(relPath)) continue;
-
-      if (signal.aborted) throw new Error("compare-cancelled");
-      if (isIgnored(relPath)) {
-        diff.ignored.push({ path: relPath, size: tInfo.size, side: 'target' });
-        continue;
-      }
-
-      diff.targetOnly.push({ path: relPath, size: tInfo.size, mtime: tInfo.mtime });
-    }
-
-    diff.sourceOnly = diff.sourceOnly.map(f => ({ path: f.path, size: f.size }));
-    diff.targetOnly = diff.targetOnly.map(f => ({ path: f.path, size: f.size }));
-
-    return diff;
+    return await buildDirDiff(task, sendProgress, signal);
   } catch (err) {
     // 用户取消对比：作为已取消错误抛出，渲染进程据此关闭扫描界面
     if (signal.aborted) {

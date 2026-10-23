@@ -24,6 +24,8 @@ interface DiffModalProps {
   tasks: SyncTask[];
   diffData: DiffResult | null;
   onClose: () => void;
+  /** 全量同步完成后由主进程返回协调后的新对比结果，用于刷新显示 */
+  onDiffUpdate?: (diff: DiffResult) => void;
 }
 
 export const DiffModal: React.FC<DiffModalProps> = ({
@@ -31,6 +33,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   tasks,
   diffData,
   onClose,
+  onDiffUpdate,
 }) => {
   const [ignorePatterns, setIgnorePatterns] = useState<string[]>([]);
   const [scanCount, setScanCount] = useState(0);
@@ -127,9 +130,18 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   ) => {
     if (!await window.electronAPI.showConfirm(`确定要同步全部 ${files.length} 个文件吗？`)) return;
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
-    const success = await window.electronAPI.syncFiles(taskId, files.map(f => f.path), direction);
-    if (success) markAllResolved(files);
-    setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
+    try {
+      const result = await window.electronAPI.syncFiles(taskId, files.map(f => f.path), direction);
+      if (result.ok && result.diff) {
+        // 全量同步后主进程已重新对比，用协调后的真实差异替换展示
+        onDiffUpdate?.(result.diff);
+        setResolvedPaths(new Set());
+      } else if (result.ok) {
+        markAllResolved(files);
+      }
+    } finally {
+      setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
+    }
   };
 
   const handleDeleteAll = async (

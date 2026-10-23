@@ -51,6 +51,7 @@ export interface ElectronAPI {
   clearPersistentLogs: (id: string) => Promise<boolean>
   openLogFolder: (id: string) => Promise<boolean>
   getAppDataPath: () => Promise<string>
+  getAppVersion: () => Promise<string>
   openAppDataFolder: () => Promise<boolean>
   quitApp: () => Promise<boolean>
   getIgnorePatterns: () => Promise<string[]>
@@ -60,7 +61,7 @@ export interface ElectronAPI {
   revealBackupFile: (taskId: string, filePath: string) => Promise<boolean>
   deleteBackupFile: (taskId: string, filePath: string) => Promise<boolean>
   syncSingleFile: (taskId: string, filePath: string, direction: 'sourceToTarget' | 'targetToSource') => Promise<boolean>
-  syncFiles: (taskId: string, filePaths: string[], direction: 'sourceToTarget' | 'targetToSource') => Promise<boolean>
+  syncFiles: (taskId: string, filePaths: string[], direction: 'sourceToTarget' | 'targetToSource') => Promise<{ ok: boolean; diff?: DiffResult }>
   deleteFile: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
   deleteFiles: (taskId: string, filePaths: string[], side: 'source' | 'target') => Promise<boolean>
   ignorePath: (taskId: string, filePath: string) => Promise<boolean>

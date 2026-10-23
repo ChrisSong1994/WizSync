@@ -1,6 +1,6 @@
 {
   "name": "wizsync",
-  "version": "1.0.7-beta.2",
+  "version": "1.0.7",
   "description": "Clean and professional directory sync app powered by Unison",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -25,6 +25,7 @@
     "directories": {
       "output": "release"
     },
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
     "asarUnpack": [
       "src/resources/bin/**/*"
     ],

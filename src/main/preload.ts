@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearPersistentLogs: (id: string) => ipcRenderer.invoke('clear-persistent-logs', id),
   openLogFolder: (id: string) => ipcRenderer.invoke('open-log-folder', id),
   getAppDataPath: () => ipcRenderer.invoke('get-app-data-path'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   openAppDataFolder: () => ipcRenderer.invoke('open-app-data-folder'),
   quitApp: () => ipcRenderer.invoke('quit-app'),
   getIgnorePatterns: () => ipcRenderer.invoke('get-ignore-patterns'),

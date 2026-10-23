@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { X, Settings, FolderOpen, Database, LogOut } from "lucide-react";
+import { X, Settings, FolderOpen, Database, LogOut, Info } from "lucide-react";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -11,14 +11,19 @@ interface SettingsModalProps {
  */
 export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [appDataPath, setAppDataPath] = useState<string>("");
+  const [appVersion, setAppVersion] = useState<string>("");
 
   useEffect(() => {
-    // 加载应用数据目录路径
-    const loadAppDataPath = async () => {
-      const path = await window.electronAPI.getAppDataPath();
+    // 加载应用数据目录路径与当前版本号
+    const loadAppInfo = async () => {
+      const [path, version] = await Promise.all([
+        window.electronAPI.getAppDataPath(),
+        window.electronAPI.getAppVersion(),
+      ]);
       setAppDataPath(path);
+      setAppVersion(version);
     };
-    loadAppDataPath();
+    loadAppInfo();
   }, []);
 
   const handleOpenFolder = () => {
@@ -88,6 +93,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               <FolderOpen size={14} />
               打开目录
             </button>
+          </div>
+
+          {/* 版本信息 */}
+          <div className="mt-3 flex items-center justify-between gap-4 bg-slate-50 rounded-xl px-4 py-3.5 border border-slate-100">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                <Info size={18} className="text-blue-600" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-semibold text-slate-700 text-sm">版本</div>
+                <div className="text-xs text-slate-500 truncate">
+                  当前版本：{appVersion ? `v${appVersion}` : "加载中..."}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

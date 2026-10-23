@@ -9,6 +9,8 @@ import {
   resolveInside,
   getAllFiles,
   filesContentEqual,
+  computeDirDiff,
+  resolveExistingRelativePath,
 } from "../../../src/main/libs/fs-utils";
 
 let tmpDir: string;
@@ -175,11 +177,216 @@ describe("getAllFiles", () => {
     const files = await getAllFiles(path.join(tmpDir, "nope"));
     expect(files.size).toBe(0);
   });
+
+  it("单个文件无法读取（断链 symlink）不再截断整个目录扫描", async () => {
+    writeFile("sub/a_keep.txt", "real1");
+    writeFile("sub/z_keep.txt", "real2");
+    // 非隐藏断链 symlink 排序在最前：stat 跟随后抛 ENOENT。
+    // 修复前会让整个 sub/ 目录从结果里消失，把真实文件误报为"仅在另一侧"。
+    const broken = path.join(tmpDir, "sub", "0_aaaa_broken");
+    fs.symlinkSync("/nonexistent/target", broken);
+
+    const files = await getAllFiles(tmpDir);
+    expect([...files.keys()].sort()).toEqual(["sub/a_keep.txt", "sub/z_keep.txt"]);
+  });
+
+  it("跳过可解析的 symlink（unison 默认忽略链接，避免同步后对比仍残留差异）", async () => {
+    writeFile("real.txt", "real");
+    writeFile("dir/inner.txt", "inner");
+    fs.symlinkSync("real.txt", path.join(tmpDir, "link-file")); // 相对 symlink → 文件
+    fs.symlinkSync("dir", path.join(tmpDir, "link-dir")); // 相对 symlink → 目录
+
+    const files = await getAllFiles(tmpDir);
+    // 只保留真实文件，symlink 一律不进入对比清单
+    expect([...files.keys()].sort()).toEqual(["dir/inner.txt", "real.txt"]);
+  });
 });
 
 describe("IGNORE_PATTERNS", () => {
   it("包含约定的黑名单", () => {
     expect(IGNORE_PATTERNS).toEqual(["node_modules", "Thumbs.db", "desktop.ini"]);
+  });
+});
+
+describe("computeDirDiff", () => {
+  /** 设置文件 mtime（毫秒），用于构造确定性的 mtime 差异 */
+  function setMtime(rel: string, ms: number) {
+    const full = path.join(tmpDir, rel);
+    fs.utimesSync(full, ms / 1000, ms / 1000);
+  }
+
+  /** 对 tmpDir/src 与 tmpDir/tgt 跑一遍对比 */
+  async function diffFor(foldCase: boolean, ignoredPaths: string[] = []) {
+    const [sourceFiles, targetFiles] = await Promise.all([
+      getAllFiles(path.join(tmpDir, "src")),
+      getAllFiles(path.join(tmpDir, "tgt")),
+    ]);
+    return computeDirDiff(sourceFiles, targetFiles, {
+      sourceRoot: path.join(tmpDir, "src"),
+      targetRoot: path.join(tmpDir, "tgt"),
+      ignoredPaths,
+      foldCase,
+    });
+  }
+
+  it("foldCase=true: 大小写不同的同内容文件折叠为同一文件（in-sync）", async () => {
+    // unison -fat 下源端 photos/img.jpg 与目标端 Photos/IMG.jpg 被视为同一文件；
+    // Node 对比若不折叠会同时报"仅在源/仅在目标"——这正是"同步后对比仍残留差异"的根因。
+    writeFile("src/photos/img.jpg", "case-content");
+    writeFile("tgt/Photos/IMG.jpg", "case-content");
+    setMtime("src/photos/img.jpg", 1_700_000_000_000);
+    setMtime("tgt/Photos/IMG.jpg", 1_700_000_000_000);
+
+    const d = await diffFor(true);
+    expect(d.sourceOnly).toEqual([]);
+    expect(d.targetOnly).toEqual([]);
+    expect(d.different).toEqual([]);
+  });
+
+  it("foldCase=true: 大小写不同但内容不同时报为 different（不是仅在某一侧）", async () => {
+    writeFile("src/photos/img.jpg", "AAAA");
+    writeFile("tgt/Photos/IMG.jpg", "BBBB");
+    setMtime("src/photos/img.jpg", 1_000_000_000_000);
+    setMtime("tgt/Photos/IMG.jpg", 2_000_000_000_000); // mtime 差异 > 2000ms → 走内容比对
+
+    const d = await diffFor(true);
+    expect(d.sourceOnly).toEqual([]);
+    expect(d.targetOnly).toEqual([]);
+    expect(d.different).toHaveLength(1);
+    expect(d.different[0].path).toBe("photos/img.jpg"); // 展示源端实际路径
+    expect(d.different[0].sourceSize).toBe(4);
+    expect(d.different[0].targetSize).toBe(4);
+  });
+
+  it("foldCase=false: 保持大小写敏感，大小写不同的文件报为仅在某一侧", async () => {
+    writeFile("src/photos/img.jpg", "case-content");
+    writeFile("tgt/Photos/IMG.jpg", "case-content");
+    setMtime("src/photos/img.jpg", 1_700_000_000_000);
+    setMtime("tgt/Photos/IMG.jpg", 1_700_000_000_000);
+
+    const d = await diffFor(false);
+    expect(d.sourceOnly.map(x => x.path)).toEqual(["photos/img.jpg"]);
+    expect(d.targetOnly.map(x => x.path)).toEqual(["Photos/IMG.jpg"]);
+    expect(d.different).toEqual([]);
+  });
+
+  it("大小相同、mtime 差异大但内容一致 → in-sync（内容比对）", async () => {
+    writeFile("src/a.txt", "hello world");
+    writeFile("tgt/a.txt", "hello world");
+    setMtime("src/a.txt", 1_000_000_000_000);
+    setMtime("tgt/a.txt", 2_000_000_000_000);
+
+    const d = await diffFor(true);
+    expect(d.different).toEqual([]);
+  });
+
+  it("大小相同、mtime 差异大且内容不同 → different", async () => {
+    writeFile("src/a.txt", "hello!");
+    writeFile("tgt/a.txt", "world!");
+    setMtime("src/a.txt", 1_000_000_000_000);
+    setMtime("tgt/a.txt", 2_000_000_000_000);
+
+    const d = await diffFor(true);
+    expect(d.different).toHaveLength(1);
+    expect(d.different[0].path).toBe("a.txt");
+  });
+
+  it("大小不同 → different（无需内容比对）", async () => {
+    writeFile("src/a.txt", "short");
+    writeFile("tgt/a.txt", "a much longer content");
+    const d = await diffFor(true);
+    expect(d.different).toHaveLength(1);
+    expect(d.different[0].path).toBe("a.txt");
+  });
+
+  it("仅在某一侧的文件 → sourceOnly / targetOnly", async () => {
+    writeFile("src/only_src.txt", "s");
+    writeFile("tgt/only_tgt.txt", "t");
+    const d = await diffFor(true);
+    expect(d.sourceOnly.map(x => x.path)).toEqual(["only_src.txt"]);
+    expect(d.targetOnly.map(x => x.path)).toEqual(["only_tgt.txt"]);
+    expect(d.different).toEqual([]);
+  });
+
+  it("ignoredPaths 命中的路径不进 sourceOnly/targetOnly，进入 ignored", async () => {
+    writeFile("src/skip_me.txt", "s");
+    writeFile("tgt/skip_me.txt", "t");
+    writeFile("src/keep.txt", "k");
+    const d = await diffFor(true, ["skip_me.txt"]);
+    // skip_me.txt 两侧都在但被忽略 → 不进差异分组，进 ignored
+    expect(d.sourceOnly.map(x => x.path)).toEqual(["keep.txt"]);
+    expect(d.targetOnly).toEqual([]);
+    expect(d.ignored.some(i => i.path === "skip_me.txt")).toBe(true);
+  });
+
+  // unison 默认 unicode=true：它会把 NFD 名字在目标端写成 NFC。
+  // 对比层必须同样按 NFC 折叠，否则同步完成后仍会残留"仅在源/仅在目标"的幽灵差异。
+  const NFD_CAFE = "cafe\u0301.txt"; // e + combining acute
+  const NFC_CAFE = "caf\u00e9.txt";  // é
+
+  it("NFC/NFD 归一化：源端 NFD、目标端 NFC 视为同一文件（in-sync）", async () => {
+    const T = 1_700_000_000_000;
+    writeFile(`src/${NFD_CAFE}`, "same-content");
+    writeFile(`tgt/${NFC_CAFE}`, "same-content");
+    setMtime(`src/${NFD_CAFE}`, T);
+    setMtime(`tgt/${NFC_CAFE}`, T);
+
+    // foldCase 开关不应影响 Unicode 归一化（unison 与 -fat 无关地做归一化）
+    for (const foldCase of [true, false]) {
+      const d = await diffFor(foldCase);
+      expect(d.sourceOnly).toEqual([]);
+      expect(d.targetOnly).toEqual([]);
+      expect(d.different).toEqual([]);
+    }
+  });
+
+  it("NFC/NFD 归一化不会掩盖真实内容差异（仍报 different）", async () => {
+    writeFile(`src/${NFD_CAFE}`, "aaaa");
+    writeFile(`tgt/${NFC_CAFE}`, "bb");
+    const d = await diffFor(true);
+    expect(d.sourceOnly).toEqual([]);
+    expect(d.targetOnly).toEqual([]);
+    expect(d.different).toHaveLength(1);
+    expect(d.different[0].sourceSize).toBe(4);
+    expect(d.different[0].targetSize).toBe(2);
+  });
+
+  it("ignoredPaths 用另一种归一化形式书写也能命中", async () => {
+    writeFile(`src/${NFD_CAFE}`, "x");
+    const d = await diffFor(true, [NFC_CAFE]);
+    expect(d.sourceOnly).toEqual([]);
+    expect(d.targetOnly).toEqual([]);
+    expect(d.ignored.map(i => i.path)).toEqual([NFD_CAFE]);
+  });
+});
+
+describe("resolveExistingRelativePath", () => {
+  it("精确匹配时原样返回", () => {
+    writeFile("tgt/sub/a.txt", "x");
+    expect(resolveExistingRelativePath(path.join(tmpDir, "tgt"), path.join("sub", "a.txt")))
+      .toBe(path.join("sub", "a.txt"));
+  });
+
+  it("Unicode 归一化 / 大小写不一致时仍能解析到磁盘上的真实条目", () => {
+    // 对比层按 NFC 折叠，可能给出与磁盘字节不同的名字（源端 NFD、目标端 NFC）
+    writeFile("tgt/caf\u00e9.txt", "x"); // NFC 名字落盘
+    const queried = ["cafe\u0301.txt", "CAF\u00c9.TXT"]; // NFD / 全大写
+
+    for (const q of queried) {
+      const rel = resolveExistingRelativePath(path.join(tmpDir, "tgt"), q);
+      expect(rel).not.toBeNull();
+      // 返回的名字必须真实存在，且指向同一个文件
+      expect(fs.existsSync(path.join(tmpDir, "tgt", rel!))).toBe(true);
+      expect(fs.readFileSync(path.join(tmpDir, "tgt", rel!), "utf-8")).toBe("x");
+      expect(rel!.normalize("NFC").toLowerCase()).toBe("caf\u00e9.txt");
+    }
+  });
+
+  it("路径不存在时返回 null，且不会越出根目录", () => {
+    writeFile("tgt/a.txt", "x");
+    const root = path.join(tmpDir, "tgt");
+    expect(resolveExistingRelativePath(root, "nope.txt")).toBeNull();
+    expect(resolveExistingRelativePath(root, path.join("..", "a.txt"))).toBeNull();
   });
 });
 

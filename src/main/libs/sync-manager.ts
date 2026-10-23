@@ -307,8 +307,9 @@ export class SyncManager {
    * 这是为了替代手动的 fs.copyFileSync 和 fs.unlinkSync，让 Unison 引擎自己处理，避免 Destination updated 错误
    * @param specificPaths 一个或多个要同步的相对路径，会通过多个 -path 参数一次传给 Unison，避免逐文件启动进程
    */
-  public runSpecificPathSync(task: SyncTask, specificPaths: string[], specificDirection?: "sourceToTarget" | "targetToSource") {
-    // 复用原有的 runUnison，但通过额外的 path 参数限定只同步这些路径
+  public runSpecificPathSync(task: SyncTask, specificPaths?: string[], specificDirection?: "sourceToTarget" | "targetToSource") {
+    // 复用原有的 runUnison。传入 specificPaths 时通过 -path 限定只同步这些路径；
+    // 不传（undefined）则对整棵树协调，用于"以 unison 为唯一权威"的手动全量同步。
     return this.runUnison(task, specificPaths, specificDirection);
   }
 

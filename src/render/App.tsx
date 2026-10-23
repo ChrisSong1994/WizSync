@@ -217,6 +217,7 @@ function App() {
           tasks={tasks}
           diffData={diffData}
           onClose={() => setComparingTaskId(null)}
+          onDiffUpdate={setDiffData}
         />
       )}
 
