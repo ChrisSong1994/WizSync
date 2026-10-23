@@ -44,8 +44,12 @@ WizSync 的同步能力并非从零开发，而是构建在成熟的开源同步
 
 ### 3.1 内置二进制分发
 为了实现“开箱即用”，WizSync 将对应平台的 Unison 二进制文件内置在 `src/resources/bin` 目录下：
-- **macOS**: 区分 `darwin-x64` 和 `darwin-arm64` 架构。
-- **路径定位**: 主进程动态判断 `app.isPackaged`，在开发和生产环境下准确找到二进制路径。
+- **macOS**: `darwin-x64` / `darwin-arm64`（随仓库提供）。
+- **Windows**: `win32-x64`（`unison.exe`，由 `pnpm fetch:unison` 下载官方 Release）。
+- **Linux**: `linux-x64`（Ubuntu 22.04 静态构建，由 `pnpm fetch:unison` 下载官方 Release）。
+- **路径定位**: 主进程按 `process.platform` + `process.arch` 计算目录，动态判断 `app.isPackaged`，在开发和生产环境下准确找到二进制路径。
+
+> Linux/Windows 开发或本地打包前，先执行 `pnpm fetch:unison` 下载当前平台二进制（脚本幂等，已存在则跳过；CI 中会自动执行）。
 
 ### 3.2 托盘交互 (Tray Experience)
 托盘图标不仅仅是一个快捷方式，它是主窗口的补充：
@@ -77,14 +81,55 @@ git push origin v1.0.7
 
 工作流会依次执行：
 
-1. 在 `macos-latest` 上按 `arm64` / `x64` 双架构并行构建；
-2. 类型检查（`tsc`）与单元测试（`vitest`）；
-3. 用 `electron-builder` 生成 `.dmg` 与 `.zip`，产物名形如 `WizSync-1.0.7-arm64.dmg`；
-4. 将全部产物上传到同名 GitHub Release，并自动生成 Release Notes。
+1. 在 `ubuntu-latest` 上执行类型检查（`tsc`）与单元测试（`vitest`）；
+2. 按平台并行构建：macOS `arm64` / `x64`、Windows `x64`、Linux `x64`；
+3. Windows / Linux 构建前自动执行 `node scripts/fetch-unison.mjs` 拉取官方 Unison 二进制；
+4. 用 `electron-builder` 生成安装包，产物名形如 `WizSync-1.0.7-arm64.dmg`、`WizSync-1.0.7-x64.exe`、`WizSync-1.0.7-x64.AppImage`、`WizSync-1.0.7-x64.deb`；
+5. 将全部产物上传到同名 GitHub Release，并自动生成 Release Notes。
 
 补充说明：
 
 - 构建时会把 `package.json` 的 `version` 同步为标签去掉 `v` 后的值，因此无需手动改版本号；
+- `package.json` 的 `build.electronDownload.mirror` 指向 npmmirror，避免国内网络直连 GitHub 下载 Electron 超时；如 CI/本地网络可直连官方源，可删除该配置；
 - 标签含 `-`（如 `v1.0.7-beta.1`）会发布为 **Pre-release**；
 - 手动触发（Actions → Release → Run workflow）只构建并上传 Actions 产物，不会创建 Release；
-- 当前工作流未配置代码签名与公证，产物属于未签名版本，用户首次打开需在“系统设置 → 隐私与安全性”中放行；如需正式分发，可补充 `CSC_LINK` / `CSC_KEY_PASSWORD` 及 Apple 公证相关 Secrets。
+- 当前工作流未配置代码签名与公证（macOS）/ 证书签名（Windows），产物属于未签名版本：macOS 用户首次打开需在“系统设置 → 隐私与安全性”中放行，Windows 可能触发 SmartScreen 提示；如需正式分发，可补充 `CSC_LINK` / `CSC_KEY_PASSWORD` 及 Apple 公证相关 Secrets；
+- Linux 提供 AppImage（免安装）与 deb（Debian/Ubuntu）两种包；
+- Windows 的孤儿 Unison 进程清理依赖 `ps`，目前仅在 macOS/Linux 生效。
+
+### 5.1 本地构建
+
+本地构建统一走 `scripts/build.mjs`，它会先准备好目标平台的 Unison 二进制，再依次执行 `tsc`、`vite build`、`electron-builder`：
+
+```bash
+pnpm build          # 构建当前平台（macOS 按当前架构：Apple Silicon 为 arm64）
+pnpm build:mac      # macOS，可加 --arch=x64 构建 Intel 版
+pnpm build:win      # Windows x64（NSIS 安装包）
+pnpm build:linux    # Linux x64（AppImage + deb）
+```
+
+产物统一输出到 `release/`，例如 `WizSync-1.0.7-arm64.dmg`、`WizSync-1.0.7-x64.exe`、`WizSync-1.0.7-x86_64.AppImage`、`WizSync-1.0.7-amd64.deb`。
+
+脚本常用参数：
+
+```bash
+node scripts/build.mjs win --arch=x64     # 显式指定架构
+node scripts/build.mjs win --skip-fetch   # 跳过 Unison 下载（二进制已就绪）
+node scripts/build.mjs win --no-wine-check
+```
+
+平台与前置条件：
+
+- **macOS**：只能在 macOS 主机上构建（`electron-builder` 限制），需要 Xcode Command Line Tools；
+- **Windows**：在 macOS 上可直接交叉构建，`electron-builder` 会自动下载内置的 `wine-4.0.1-mac` 生成 NSIS 安装包（Apple Silicon 需已安装 Rosetta 2）；在 Linux 主机上交叉构建则需要系统预装 Wine（`sudo apt install wine64`），否则脚本会提示并可加 `--no-wine-check` 跳过检查；在 Windows 上构建则原生完成；
+- **Linux**：在任意平台上交叉构建均可，需要 `fpm` 等工具（脚本已默认从 npmmirror 下载 `electron-builder-binaries`）。
+
+Unison 二进制下载说明：
+
+- `scripts/fetch-unison.mjs` 固定下载 Unison 2.54.0 的官方 Release（Linux 为 Ubuntu 22.04 静态构建），下载后按 GitHub API 提供的 **sha256** 校验，校验失败视为不可信并尝试下一个来源；
+- 下载顺序：`UNISON_PROXY`（自定义镜像前缀）→ GitHub 直连 → `ghfast.top` / `gh-proxy.com` 公共代理；
+- GitHub 完全不可达时，可手动下载官方归档后本地导入：
+  ```bash
+  node scripts/fetch-unison.mjs --platform=win32 --arch=x64 --file=~/Downloads/unison-2.54.0-windows-x86_64.zip
+  ```
+- 已下载的二进制位于 `src/resources/bin/<platform>-<arch>/`，不会提交到仓库（见 `.gitignore`）；`--force` 可强制重新下载。

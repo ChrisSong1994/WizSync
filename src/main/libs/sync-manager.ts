@@ -4,10 +4,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { SyncTask } from "./types";
 import { syncStore } from "./sync-store";
-import { getDirStats } from "./fs-utils";
+import { getDirStats, isPathInside } from "./fs-utils";
 import { diskManager } from "./disk";
 import { getUnisonPath } from "../main";
 import { logManager } from "./logs";
+
+/**
+ * Unison 的 -path / -ignore Path 参数始终使用 POSIX 分隔符，
+ * Windows 下需要把 UI/对比层给出的 \ 转成 /。
+ */
+function toUnisonPath(p: string): string {
+  return process.platform === "win32" ? p.split(/[\\/]+/).join("/") : p;
+}
 
 /**
  * 同步管理器类 (SyncManager)
@@ -343,16 +351,15 @@ export class SyncManager {
       this.handleOffline(task);
       return Promise.resolve(false);
     }
-    if (srcReal === tgtReal) {
+    if (isPathInside(srcReal, tgtReal) && isPathInside(tgtReal, srcReal)) {
       const errMsg = `路径配置错误：源目录与目标目录解析后指向同一真实路径，拒绝同步。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
       console.error(errMsg);
       logManager.write(task.id, `[错误] ${errMsg}`);
       this.updateStatus(task.id, "error");
       return Promise.resolve(false);
     }
-    const srcNorm = srcReal.endsWith(path.sep) ? srcReal : srcReal + path.sep;
-    const tgtNorm = tgtReal.endsWith(path.sep) ? tgtReal : tgtReal + path.sep;
-    if (srcNorm.startsWith(tgtNorm) || tgtNorm.startsWith(srcNorm)) {
+    // isPathInside 已处理大小写不敏感文件系统（Windows/macOS）
+    if (isPathInside(srcReal, tgtReal) || isPathInside(tgtReal, srcReal)) {
       const errMsg = `路径配置错误：源目录与目标目录存在嵌套关系（含 symlink 解析后），这会导致同步时递归创建同名目录。请检查任务配置。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
       console.error(errMsg);
       logManager.write(task.id, `[错误] ${errMsg}`);
@@ -427,14 +434,15 @@ export class SyncManager {
     // 添加任务自定义忽略路径
     if (task.ignoredPaths && task.ignoredPaths.length > 0) {
       task.ignoredPaths.forEach(p => {
-        args.push("-ignore", `Path ${p}`);
+        // Unison 的忽略 / 增量路径始终使用 /，Windows 下需要把 \ 转回 /
+        args.push("-ignore", `Path ${toUnisonPath(p)}`);
       });
     }
 
     // 增加指定特定路径同步的参数
     if (specificPaths && specificPaths.length > 0) {
       specificPaths.forEach(p => {
-        args.push("-path", p);
+        args.push("-path", toUnisonPath(p));
       });
     }
 

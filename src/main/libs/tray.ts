@@ -46,6 +46,10 @@ export class TrayManager {
       this.tray.setIgnoreDoubleClickEvents(true);
     }
 
+    // 当前菜单引用：菜单内容随任务状态重建，但事件监听只注册一次，
+    // 避免每次 updateTrayMenu 都叠加一组监听器（旧实现的内存泄漏）。
+    let currentMenu: Menu | null = null;
+
     const updateTrayMenu = () => {
       const tasks = syncStore.getTasks();
       const syncingTasks = tasks.filter((t) => t.status === "syncing");
@@ -123,14 +127,9 @@ export class TrayManager {
         },
       ]);
 
-      if (process.platform === "darwin") {
-        this.tray?.on("click", () => {
-          this.tray?.popUpContextMenu(fullMenu);
-        });
-        this.tray?.on("right-click", () => {
-          this.tray?.popUpContextMenu(fullMenu);
-        });
+      currentMenu = fullMenu;
 
+      if (process.platform === "darwin") {
         // 更新标题显示数量
         if (syncingTasks.length > 0) {
           this.tray?.setTitle(` ${syncingTasks.length}`);
@@ -138,9 +137,21 @@ export class TrayManager {
           this.tray?.setTitle("");
         }
       } else {
+        // Windows/Linux 通过 setContextMenu 提供右键菜单（Linux 也依赖它）
         this.tray?.setContextMenu(fullMenu);
       }
     };
+
+    // 左键点击托盘弹出菜单：macOS 本就没有 setContextMenu 行为，Windows 默认只有右键。
+    // 监听器只在这里注册一次，菜单内容变化通过 currentMenu 引用反映。
+    this.tray.on("click", () => {
+      if (currentMenu) this.tray?.popUpContextMenu(currentMenu);
+    });
+    if (process.platform === "darwin") {
+      this.tray.on("right-click", () => {
+        if (currentMenu) this.tray?.popUpContextMenu(currentMenu);
+      });
+    }
 
     syncManager.setStatusChangeCallback(updateTrayMenu);
     updateTrayMenu();

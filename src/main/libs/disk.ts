@@ -21,7 +21,11 @@ export class DiskManager {
       const stats = fs.statfsSync(dirPath);
       
       let name = "本地磁盘";
-      if (dirPath.startsWith("/Volumes/")) {
+      if (process.platform === "win32") {
+        // Windows 以盘符作为磁盘名称，例如 "C:\Users\foo" → "C 盘"
+        const drive = /^([a-zA-Z]):/.exec(dirPath);
+        if (drive) name = `${drive[1].toUpperCase()} 盘`;
+      } else if (dirPath.startsWith("/Volumes/")) {
         name = dirPath.split("/")[2] || "外置磁盘";
       } else if (process.platform === "darwin" && (dirPath === "/" || dirPath.startsWith("/Users"))) {
         name = "Macintosh HD";

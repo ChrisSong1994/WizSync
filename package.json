@@ -1,16 +1,21 @@
 {
   "name": "wizsync",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "description": "Clean and professional directory sync app powered by Unison",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "start": "npm run dev",
-    "build": "tsc && vite build && electron-builder",
+    "build": "node scripts/build.mjs",
+    "build:mac": "node scripts/build.mjs mac",
+    "build:win": "node scripts/build.mjs win",
+    "build:linux": "node scripts/build.mjs linux",
+    "fetch:unison": "node scripts/fetch-unison.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "author": "ChrisSong1994",
   "dependencies": {
     "clsx": "^2.1.0",
     "electron-store": "^8.1.0",
@@ -26,6 +31,9 @@
       "output": "release"
     },
     "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    },
     "asarUnpack": [
       "src/resources/bin/**/*"
     ],
@@ -40,6 +48,28 @@
       "target": [
         "dmg",
         "zip"
+      ]
+    },
+    "win": {
+      "icon": "public/assets/icon-512.png",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "WizSync"
+    },
+    "linux": {
+      "icon": "public/assets/icon-512.png",
+      "category": "Utility",
+      "maintainer": "ChrisSong1994 <ChrisSong1994@users.noreply.github.com>",
+      "target": [
+        "AppImage",
+        "deb"
       ]
     }
   },

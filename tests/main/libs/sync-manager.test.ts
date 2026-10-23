@@ -66,9 +66,17 @@ vi.mock("../../../src/main/libs/disk", () => ({
   diskManager: { getDiskSpace: vi.fn(() => null) },
 }));
 
-vi.mock("../../../src/main/libs/fs-utils", () => ({
-  getDirStats: vi.fn(async () => ({ size: 0, count: 0 })),
-}));
+vi.mock("../../../src/main/libs/fs-utils", async () => {
+  // isPathInside 是纯路径逻辑，直接用真实实现（大小写折叠等行为需要被测到），
+  // 只把重 IO 的 getDirStats 替换掉。
+  const actual = await vi.importActual<typeof import("../../../src/main/libs/fs-utils")>(
+    "../../../src/main/libs/fs-utils",
+  );
+  return {
+    isPathInside: actual.isPathInside,
+    getDirStats: vi.fn(async () => ({ size: 0, count: 0 })),
+  };
+});
 
 vi.mock("node:child_process", () => ({
   spawn: vi.fn(() => new fakeProc.FakeProc()),

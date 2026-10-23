@@ -136,15 +136,28 @@ export async function getDirStats(
 }
 
 /**
+ * 路径比较用的规范化：解析为绝对路径，并在大小写不敏感的文件系统上折叠大小写
+ * （Windows 与 macOS 默认大小写不敏感，Linux 默认敏感）。
+ */
+function normalizeForCompare(p: string): string {
+  const resolved = path.resolve(p);
+  return process.platform === "win32" || process.platform === "darwin"
+    ? resolved.toLowerCase()
+    : resolved;
+}
+
+/**
  * 判断 target 绝对路径是否位于 base 目录之内（含 base 本身）。
  * 用于 IPC 边界校验，防止路径穿越导致越权删除/同步。
  */
 export function isPathInside(base: string, target: string): boolean {
-  const baseResolved = path.resolve(base);
-  const targetResolved = path.resolve(target);
+  const baseResolved = normalizeForCompare(base);
+  const targetResolved = normalizeForCompare(target);
+  // 根目录（"C:\" / "/"）本身已带分隔符，不能再补一个
+  const suffix = baseResolved.endsWith(path.sep) ? "" : path.sep;
   return (
     targetResolved === baseResolved ||
-    targetResolved.startsWith(baseResolved + path.sep)
+    targetResolved.startsWith(baseResolved + suffix)
   );
 }
 
@@ -184,7 +197,10 @@ export function resolveExistingRelativePath(
   root: string,
   relPath: string,
 ): string | null {
-  const segments = relPath.split(path.sep).filter((s) => s.length > 0 && s !== ".");
+  // 相对路径可能来自 unison 参数（始终使用 /）或对比层（使用平台分隔符），统一拆分
+  const segments = relPath
+    .split(/[\\/]+/)
+    .filter((s) => s.length > 0 && s !== ".");
   if (segments.some((s) => s === "..")) return null;
   let currentAbs = path.resolve(root);
   const matched: string[] = [];
@@ -361,11 +377,13 @@ export async function computeDirDiff(
   const throwIfCancelled = () => {
     if (signal?.aborted) throw new Error("compare-cancelled");
   };
-  // 忽略规则也按 NFC 归一化比较，避免忽略列表里的 NFD 路径匹配不到 NFC 文件名
+  // 忽略规则也按 NFC 归一化比较，避免忽略列表里的 NFD 路径匹配不到 NFC 文件名；
+  // 同时把 / 与 \ 统一成平台分隔符，保证 Windows 下 UI 输入的 "a/b" 能匹配 "a\\b"
+  const toNativeSep = (p: string) => p.split(/[\\/]+/).join(path.sep);
   const isIgnored = (relPath: string) => {
-    const normalized = normalizeName(relPath);
+    const normalized = normalizeName(toNativeSep(relPath));
     return ignoredPaths.some(p => {
-      const pattern = normalizeName(p);
+      const pattern = normalizeName(toNativeSep(p));
       return normalized === pattern || normalized.startsWith(pattern + path.sep);
     });
   };
