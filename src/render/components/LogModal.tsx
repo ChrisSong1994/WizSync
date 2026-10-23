@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { X, Clock, Trash2, FolderOpen } from "lucide-react";
+import { X, Clock, Trash2, FolderOpen, ArrowDownToLine, ArrowDownFromLine } from "lucide-react";
 import { SyncTask } from "../types";
 import { cn } from "../utils";
 
@@ -16,6 +16,7 @@ export const LogModal: React.FC<LogModalProps> = ({
 }) => {
   const [persistentLogs, setPersistentLogs] = useState<string>("");
   const [sessionLogs, setSessionLogs] = useState<string[]>([]);
+  const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taskName = tasks.find((t) => t.id === taskId)?.name;
 
@@ -43,10 +44,22 @@ export const LogModal: React.FC<LogModalProps> = ({
 
   // 当日志更新时自动滚动到底部
   useEffect(() => {
-    if (scrollRef.current) {
+    if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [persistentLogs, sessionLogs]);
+  }, [persistentLogs, sessionLogs, autoScroll]);
+
+  // 监听滚动事件来判断用户是否手动向上滚动，如果是则暂停自动滚动
+  const handleScroll = () => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    // 如果距离底部超过 50px，则关闭自动滚动
+    if (scrollHeight - scrollTop - clientHeight > 50) {
+      if (autoScroll) setAutoScroll(false);
+    } else {
+      if (!autoScroll) setAutoScroll(true);
+    }
+  };
 
   const handleClearLogs = async () => {
     if (await window.electronAPI.showConfirm("确定要清空该任务的所有持久化日志吗？")) {
@@ -112,23 +125,38 @@ export const LogModal: React.FC<LogModalProps> = ({
             </button>
           </div>
         </div>
-        <div 
-          ref={scrollRef}
-          className="flex-1 overflow-auto p-4 bg-slate-950 font-mono text-[12px] leading-relaxed scroll-smooth"
-        >
-          {/* 历史持久化日志 */}
-          {persistentLogs && (
-            <div className="opacity-80">
-              {persistentLogs.split('\n').map((line, i) => line && renderLogLine(line, `p-${i}`))}
-            </div>
-          )}
-          
-          {/* 当前会话日志 */}
-          {sessionLogs.map((log, i) => renderLogLine(log, `s-${i}`))}
+        <div className="relative flex-1 flex flex-col overflow-hidden">
+          <button
+            onClick={() => setAutoScroll(!autoScroll)}
+            title={autoScroll ? "关闭自动滚动" : "开启自动滚动并滚到底部"}
+            className={cn(
+              "absolute right-6 top-4 z-10 p-2 rounded-full shadow-lg transition-all flex items-center justify-center backdrop-blur-md border",
+              autoScroll
+                ? "bg-blue-500/20 text-blue-400 border-blue-500/30 hover:bg-blue-500/30"
+                : "bg-slate-800/80 text-slate-400 border-slate-700 hover:text-white hover:bg-slate-700/80 animate-pulse"
+            )}
+          >
+            {autoScroll ? <ArrowDownFromLine size={16} /> : <ArrowDownToLine size={16} />}
+          </button>
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="flex-1 overflow-auto p-4 bg-slate-950 font-mono text-[12px] leading-relaxed scroll-smooth relative"
+          >
+            {/* 历史持久化日志 */}
+            {persistentLogs && (
+              <div className="opacity-80">
+                {persistentLogs.split('\n').map((line, i) => line && renderLogLine(line, `p-${i}`))}
+              </div>
+            )}
 
-          {!persistentLogs && sessionLogs.length === 0 && (
-            <div className="text-slate-500 italic">暂无同步日志...</div>
-          )}
+            {/* 当前会话日志 */}
+            {sessionLogs.map((log, i) => renderLogLine(log, `s-${i}`))}
+
+            {!persistentLogs && sessionLogs.length === 0 && (
+              <div className="text-slate-500 italic">暂无同步日志...</div>
+            )}
+          </div>
         </div>
       </div>
     </div>

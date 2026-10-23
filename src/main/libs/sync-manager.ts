@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from "node:child_process";
-import chokidar from "chokidar";
-import { BrowserWindow } from "electron";
+import { BrowserWindow, app } from "electron";
 import fs from "node:fs";
+import path from "node:path";
 import { SyncTask } from "./types";
 import { syncStore } from "./sync-store";
 import { getDirStats } from "./fs-utils";
@@ -11,40 +11,73 @@ import { logManager } from "./logs";
 
 /**
  * 同步管理器类 (SyncManager)
- * 核心：调度 Unison 进程 + 文件监听 + 异常处理
+ * 核心：调度 Unison 进程 + 定时检查 + 异常处理
  */
 export class SyncManager {
   private activeProcesses: Map<string, ChildProcess> = new Map();
-  private watchers: Map<string, chokidar.FSWatcher> = new Map();
   private timers: Map<string, NodeJS.Timeout> = new Map();
-  private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private win: BrowserWindow | null = null;
   private onStatusChange: (() => void) | null = null;
 
-  private isCoolingDown: Map<string, boolean> = new Map();
-  private hasPendingSync: Map<string, boolean> = new Map();
   private isManualSyncing: Map<string, boolean> = new Map();
   private resetDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  /** 已登记的同步失败重试定时器；stopTask 时需要取消并解除等待，防止任务复活 */
+  private pendingRetries: Map<string, { timer: NodeJS.Timeout; resolve: (ok: boolean) => void }> = new Map();
+  /** 正在执行停止操作的任务 id；进程 close 处理器据此跳过重试与状态更新 */
+  private stopRequested: Set<string> = new Set();
 
   /**
-   * 请求重置任务（带防抖，适用于批量手动操作后只重置一次）
+   * 获取任务在应用数据目录下的专用文件夹
    */
-  public requestReset(id: string) {
+  private getTaskDataDir(taskId: string): string {
+    const baseDir = path.join(app.getPath("userData"), "task-data", taskId);
+    if (!fs.existsSync(baseDir)) {
+      fs.mkdirSync(baseDir, { recursive: true });
+    }
+    return baseDir;
+  }
+
+  /**
+   * 请求增量同步（带防抖，适用于批量手动操作后只触发一次增量扫描）
+   * @param paths 可选：仅对指定相对路径做 -path 增量同步，避免大目录全量扫描
+   */
+  public requestIncrementalSync(id: string, paths?: string[]) {
     if (this.resetDebounceTimers.has(id)) {
       clearTimeout(this.resetDebounceTimers.get(id)!);
     }
-    
+
     const timer = setTimeout(async () => {
       const tasks = syncStore.getTasks();
       const task = tasks.find(t => t.id === id);
       if (task) {
-        logManager.write(id, "[自动重置] 手动操作已完成，正在刷新引擎状态...");
-        await this.resetTask(task);
+        if (paths && paths.length > 0) {
+          logManager.write(id, `[自动同步] 手动操作已完成，正在对 ${paths.length} 个路径执行增量同步...`);
+          try {
+            await this.runSpecificPathsChunked(task, paths);
+          } catch (err: any) {
+            logManager.write(id, `[自动同步] 增量同步失败: ${err?.message ?? String(err)}`);
+          }
+        } else {
+          logManager.write(id, "[自动同步] 手动操作已完成，正在执行增量扫描...");
+          await this.startTask(task);
+        }
       }
       this.resetDebounceTimers.delete(id);
     }, 1500);
 
     this.resetDebounceTimers.set(id, timer);
+  }
+
+  /**
+   * 将待同步路径按每批 400 个 -path 分块串行执行，避免 exec 参数超限（ARG_MAX）
+   */
+  private async runSpecificPathsChunked(task: SyncTask, paths: string[]): Promise<void> {
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < paths.length; i += CHUNK_SIZE) {
+      const chunk = paths.slice(i, i + CHUNK_SIZE);
+      const ok = await this.runSpecificPathSync(task, chunk);
+      if (!ok) break; // 任务被停止或离线，中止剩余批次
+    }
   }
 
   /**
@@ -70,8 +103,26 @@ export class SyncManager {
    */
   setWindow(win: BrowserWindow) {
     this.win = win;
-    // 窗口就绪后初始化磁盘监控
-    diskManager.init(win, () => this.onStatusChange?.());
+    // 窗口就绪后初始化磁盘监控，增加重连回调
+    diskManager.init(
+      win, 
+      () => this.onStatusChange?.(),
+      (taskId) => this.handleDiskReconnect(taskId)
+    );
+  }
+
+  /**
+   * 处理磁盘重连逻辑
+   */
+  private handleDiskReconnect(taskId: string) {
+    const tasks = syncStore.getTasks();
+    const task = tasks.find(t => t.id === taskId);
+    
+    // 如果是定时任务且当前处于错误状态（通常是由于之前的离线导致的），则尝试重新启动
+    if (task && task.mode === "scheduled" && task.status === "error") {
+      logManager.write(taskId, "[磁盘监控] 检测到磁盘已重连，正在尝试自动恢复同步...");
+      this.startTask(task);
+    }
   }
 
   setStatusChangeCallback(cb: () => void) {
@@ -87,62 +138,47 @@ export class SyncManager {
   }
 
   /**
-   * 删除任务：停止进程+监听，archive 清理异步后台执行不阻塞
+   * 删除任务：停止进程+清理缓存
    */
-  deleteTask(task: SyncTask) {
-    this.stopTask(task.id);
-    this.cleanUnisonArchives(task).catch(() => {});
+  async deleteTask(task: SyncTask) {
+    await this.stopTask(task.id);
+    await this.cleanUnisonArchives(task).catch(() => {});
   }
 
   /**
    * 重置任务：强制清理 Unison 缓存并重新启动同步
    */
   public async resetTask(task: SyncTask) {
-    this.stopTask(task.id);
+    // stopTask 会等待进程真正退出（close 事件）后再返回，归档目录可安全清理
+    await this.stopTask(task.id);
     logManager.write(task.id, "=== 强制重置同步缓存 (Archive) ===");
-    
-    // 强制等待 1 秒让磁盘句柄释放
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
     await this.cleanUnisonArchives(task);
     logManager.write(task.id, "缓存清理完成，正在重新初始化同步...");
-    
     this.startTask(task);
   }
 
   private cleanUnisonArchives(task: SyncTask): Promise<void> {
     return new Promise((resolve) => {
-      const unisonPath = getUnisonPath();
-      const proc = spawn(unisonPath, ["-showarchive", task.sourcePath, task.targetPath]);
-      let output = "";
-
-      // 5 秒超时，防止进程挂死
-      const timer = setTimeout(() => { proc.kill(); resolve(); }, 5000);
-
-      proc.stdout.on("data", (data) => { output += data.toString(); });
-      proc.stderr.on("data", (data) => { output += data.toString(); });
-
-      proc.on("close", () => {
-        clearTimeout(timer);
-        const matches = [...output.matchAll(/[Aa]rchive\s+file[^:]*:\s*(.+)/g)];
-        for (const match of matches) {
-          const archivePath = match[1].trim();
-          try {
-            if (fs.existsSync(archivePath)) fs.unlinkSync(archivePath);
-          } catch {}
+      const taskDataDir = this.getTaskDataDir(task.id);
+      const metadataDir = path.join(taskDataDir, "unison");
+      try {
+        if (fs.existsSync(metadataDir)) {
+          fs.rmSync(metadataDir, { recursive: true, force: true });
+          logManager.write(task.id, `[清理] 已删除应用数据目录下的元数据: ${metadataDir}`);
         }
-        resolve();
-      });
-
-      proc.on("error", () => { clearTimeout(timer); resolve(); });
+      } catch (err: any) {
+        logManager.write(task.id, `[警告] 清理元数据目录失败: ${err.message}`);
+      }
+      resolve();
     });
   }
 
   /**
    * 启动任务
    */
-  startTask(task: SyncTask) {
-    this.stopTask(task.id);
+  async startTask(task: SyncTask) {
+    // 等待旧进程完全退出后再启动新进程，杜绝同任务双开
+    await this.stopTask(task.id);
 
     if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
       const offlinePath = !fs.existsSync(task.sourcePath) ? "源目录" : "目标目录";
@@ -156,93 +192,88 @@ export class SyncManager {
     logManager.write(task.id, `=== 任务启动 [模式: ${task.mode}] ===`);
     this.runUnison(task);
 
-    if (task.mode === "realtime") {
-      this.setupRealtime(task);
-    } else if (task.mode === "scheduled") {
+    if (task.mode === "scheduled") {
       this.setupScheduled(task);
     }
   }
 
   /**
    * 停止并清理任务
+   * 关键点：等待进程真正退出（close 事件）后再返回，避免旧进程尚未结束就启动新进程导致双开；
+   * 同时取消所有 pending 定时器，防止任务被自动复活。
    */
-  stopTask(id: string) {
-    this.activeProcesses.get(id)?.kill();
-    this.activeProcesses.delete(id);
+  async stopTask(id: string) {
+    // 取消待执行的增量同步防抖与失败重试（重试取消时会解除等待中的同步 Promise）
+    this.cancelIncrementalSync(id);
+    this.cancelPendingRetry(id);
 
-    // PID fallback: kill by stored PID in case activeProcesses map was lost (e.g., after restart)
-    const storedTask = syncStore.getTasks().find(t => t.id === id);
-    if (storedTask?.pid) {
-      try { process.kill(storedTask.pid); } catch {}
-      syncStore.updateTask(id, { pid: undefined });
-    }
-
-    this.watchers.get(id)?.close();
-    this.watchers.delete(id);
-
+    // 停止定时任务的轮询定时器
     if (this.timers.has(id)) {
       clearInterval(this.timers.get(id)!);
       this.timers.delete(id);
     }
 
-    if (this.debounceTimers.has(id)) {
-      clearTimeout(this.debounceTimers.get(id)!);
-      this.debounceTimers.delete(id);
+    // 优先使用 activeProcesses 中的 ChildProcess 句柄。
+    // 不再回读持久化的 pid 用 process.kill：存储里的 pid 在上次崩溃重启后即为陈旧值，
+    // 且可能已被系统复用，直接 kill 存在误杀无关进程的风险。
+    const proc = this.activeProcesses.get(id);
+    this.activeProcesses.delete(id);
+    syncStore.updateTask(id, { pid: undefined });
+
+    // 进程仍在运行：标记停止并等待 close 事件，确保 close 处理器在 stopRequested 下
+    // 跳过重试/状态更新，然后再移除标记，避免竞态导致停止后任务复活
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
+      this.stopRequested.add(id);
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        // 3 秒兜底：SIGTERM 未生效则强制 SIGKILL，close 事件必然随后触发
+        const forceKillTimer = setTimeout(() => {
+          try { proc.kill("SIGKILL"); } catch {}
+        }, 3000);
+        proc.once("close", () => {
+          clearTimeout(forceKillTimer);
+          finish();
+        });
+      });
+      this.stopRequested.delete(id);
     }
 
-    this.isCoolingDown.delete(id);
-    this.hasPendingSync.delete(id);
     this.updateStatus(id, "idle");
   }
 
+  /** 取消指定任务的增量同步防抖定时器 */
+  private cancelIncrementalSync(id: string) {
+    const timer = this.resetDebounceTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      this.resetDebounceTimers.delete(id);
+    }
+  }
+
+  /** 取消指定任务的失败重试定时器，并解除等待中的同步 Promise（返回 false 表示被中断） */
+  private cancelPendingRetry(id: string) {
+    const pending = this.pendingRetries.get(id);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pending.resolve(false);
+      this.pendingRetries.delete(id);
+    }
+  }
+
   /**
-   * 配置实时监听
+   * 强力停止所有任务（用于程序退出）
    */
-  private setupRealtime(task: SyncTask) {
-    const watcher = chokidar.watch([task.sourcePath, task.targetPath], {
-      ignored: [
-        /(^|[/\\])\../,   // 所有隐藏文件和目录（以 . 开头）
-        "**/node_modules/**",
-        "**/desktop.ini",
-        "**/Thumbs.db"
-      ],
-      persistent: true,
-      ignoreInitial: true,
-      awaitWriteFinish: { 
-        stabilityThreshold: 2000,
-        pollInterval: 200 
-      },
-    });
+  public async stopAllTasks() {
+    logManager.write("global", "正在清理所有同步进程...");
 
-    watcher.on("all", (event, path) => {
-      if (this.isCoolingDown.get(task.id) || this.activeProcesses.has(task.id) || this.isTaskManualSyncing(task.id)) {
-        if (!this.isTaskManualSyncing(task.id)) {
-          this.hasPendingSync.set(task.id, true);
-        }
-        return;
-      }
+    // 覆盖所有持久化任务 + 仍活跃的进程/重试
+    const ids = new Set<string>(syncStore.getTasks().map(t => t.id));
+    this.activeProcesses.forEach((_, id) => ids.add(id));
+    this.pendingRetries.forEach((_, id) => ids.add(id));
 
-      if (this.debounceTimers.has(task.id)) {
-        clearTimeout(this.debounceTimers.get(task.id)!);
-      }
-
-      const timer = setTimeout(() => {
-        if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
-          this.handleOffline(task);
-          return;
-        }
-        this.runUnison(task);
-      }, 1500);
-
-      this.debounceTimers.set(task.id, timer);
-    });
-
-    watcher.on("error", (error) => {
-      console.error(`[Watcher Error] ${task.name}:`, error);
-      this.handleOffline(task);
-    });
-
-    this.watchers.set(task.id, watcher);
+    // 并发停止；stopTask 内部负责 SIGTERM → 等待 close → SIGKILL 兜底，并清理各任务定时器
+    await Promise.all([...ids].map(id => this.stopTask(id)));
   }
 
   private handleOffline(task: SyncTask) {
@@ -251,13 +282,17 @@ export class SyncManager {
     this.win?.webContents.send("sync-log", { id: task.id, log: errorMsg });
     this.updateStatus(task.id, "error");
     
-    this.watchers.get(task.id)?.close();
-    this.watchers.delete(task.id);
+    // 注意：不再主动停止定时器。定时器在触发时会继续检查磁盘状态。
+    // 如果磁盘一直离线，定时器会反复触发 handleOffline 并跳过 Unison。
+    // 一旦磁盘重连，DiskManager 会通过 handleDiskReconnect 立即拉起任务，
+    // 或者等待下一个定时周期自然恢复。
   }
 
   private setupScheduled(task: SyncTask) {
     const intervalMs = (task.interval || 5) * 60 * 1000;
     const timer = setInterval(() => {
+      // 手动批量同步进行中：跳过定时触发，避免在分块同步的间隙并发
+      if (this.isManualSyncing.get(task.id)) return;
       if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
         this.handleOffline(task);
         return;
@@ -268,51 +303,104 @@ export class SyncManager {
   }
 
   /**
-   * 执行 Unison 同步
+   * 启动单文件/特定路径的 Unison 同步
+   * 这是为了替代手动的 fs.copyFileSync 和 fs.unlinkSync，让 Unison 引擎自己处理，避免 Destination updated 错误
+   * @param specificPaths 一个或多个要同步的相对路径，会通过多个 -path 参数一次传给 Unison，避免逐文件启动进程
    */
-  private async runUnison(task: SyncTask) {
-    if (this.activeProcesses.has(task.id)) return;
+  public runSpecificPathSync(task: SyncTask, specificPaths?: string[], specificDirection?: "sourceToTarget" | "targetToSource") {
+    // 复用原有的 runUnison。传入 specificPaths 时通过 -path 限定只同步这些路径；
+    // 不传（undefined）则对整棵树协调，用于"以 unison 为唯一权威"的手动全量同步。
+    return this.runUnison(task, specificPaths, specificDirection);
+  }
+
+  /**
+   * 执行 Unison 同步
+   * @param specificPaths 如果提供，则只同步这些特定的相对路径
+   * @param overrideDirection 如果提供，则临时覆盖同步方向（用于单向同步）
+   */
+  private runUnison(task: SyncTask, specificPaths?: string[], overrideDirection?: "sourceToTarget" | "targetToSource", retryCount: number = 0): Promise<boolean> {
+    // 返回的 Promise 在本次同步真正完成（含重试链路）或提前中止时才 resolve。
+    // true = 完整执行完；false = 被停止/离线/仍在并发中被跳过，调用方应中止后续分批。
+    let onDone: (ok: boolean) => void = () => {};
+    const exitPromise = new Promise<boolean>((resolve) => { onDone = resolve; });
+
+    if (this.activeProcesses.has(task.id)) return Promise.resolve(false);
 
     if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
       this.handleOffline(task);
-      return;
+      return Promise.resolve(false);
+    }
+
+    // 检测路径冲突：解析 symlink 后再比较，防止以下两种危险情况：
+    // 1. 两条路径经 symlink 指向同一真实目录 → Unison 自己同步自己，数据损坏
+    // 2. symlink 绕过字符串比较，实际存在父子嵌套 → 递归创建同名目录
+    let srcReal: string, tgtReal: string;
+    try {
+      srcReal = fs.realpathSync(task.sourcePath);
+      tgtReal = fs.realpathSync(task.targetPath);
+    } catch {
+      // realpathSync 失败说明路径无法解析（断链 symlink 等），当作离线处理
+      this.handleOffline(task);
+      return Promise.resolve(false);
+    }
+    if (srcReal === tgtReal) {
+      const errMsg = `路径配置错误：源目录与目标目录解析后指向同一真实路径，拒绝同步。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
+      console.error(errMsg);
+      logManager.write(task.id, `[错误] ${errMsg}`);
+      this.updateStatus(task.id, "error");
+      return Promise.resolve(false);
+    }
+    const srcNorm = srcReal.endsWith(path.sep) ? srcReal : srcReal + path.sep;
+    const tgtNorm = tgtReal.endsWith(path.sep) ? tgtReal : tgtReal + path.sep;
+    if (srcNorm.startsWith(tgtNorm) || tgtNorm.startsWith(srcNorm)) {
+      const errMsg = `路径配置错误：源目录与目标目录存在嵌套关系（含 symlink 解析后），这会导致同步时递归创建同名目录。请检查任务配置。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
+      console.error(errMsg);
+      logManager.write(task.id, `[错误] ${errMsg}`);
+      this.updateStatus(task.id, "error");
+      return Promise.resolve(false);
     }
 
     this.updateStatus(task.id, "syncing");
-    this.hasPendingSync.set(task.id, false); 
 
     const args = [
       "-batch",
-      "-terse", 
+      "-terse",
       "-copyonconflict",
       "-ignoreinodenumbers",
-      "-fat",
       "-dontchmod",
-      "-perms", "0",
+      "-perms", "0", // 必须与 -dontchmod 搭配：unison 要求 dontchmod 时 perms=0，否则拒绝启动 (exit 3)
       "-owner=false",
       "-group=false",
-      "-xferbycopying",
       "-fastcheck=true",
       "-ui", "text",
       "-ignore", "Name .*",
       "-ignore", "Name node_modules",
       "-ignore", "Name Thumbs.db",
       "-ignore", "Name desktop.ini",
+      "-ignore", "Path .wizsync", // 强制忽略本地元数据目录
       "-label", task.name,
-      "-ignorelocks",
-      "-retry", "3",
+      "-confirmbigdel=false", // 自动确认大批量删除，防止挂起
     ];
 
+    // FAT 文件系统兼容（默认开启，面向 FAT/exFAT 移动卷；大小写敏感卷可关闭）
+    if (task.useFat !== false) args.push("-fat");
+
     // 根据同步方向优化策略
-    if (task.direction === "sourceToTarget") {
-      args.push("-prefer", task.sourcePath);
+    const currentDirection = overrideDirection || task.direction;
+
+    if (currentDirection === "sourceToTarget") {
+      // 单向 = 强镜像：-force 让源端在所有差异（含删除）中获胜。
+      // 该版本 unison 对本地同步不启用锁保护，并发安全完全由应用的
+      // 单飞守卫 + 跨任务重叠校验保证，因此不再需要 -ignorelocks。
+      // 注意：-force 下 -prefer 无额外作用，不再重复传入。
       args.push("-force", task.sourcePath);
-      // 一向同步时，对目标端的变动不敏感，防止 "Destination updated" 报错
-      args.push("-times=false");
-    } else if (task.direction === "targetToSource") {
-      args.push("-prefer", task.targetPath);
+      // 单向同步也需传播时间戳：让 -fastcheck 能用 size+mtime 判定一致。
+      // 若用 -times=false，目标端 mtime 永远是"现在"，与源端不符，
+      // 每次同步都会触发全量内容哈希比对，表现为"永远同步不完/很慢"。
+      args.push("-times");
+    } else if (currentDirection === "targetToSource") {
       args.push("-force", task.targetPath);
-      args.push("-times=false");
+      args.push("-times");
     } else {
       // 双向同步：以最新修改为准，需保持时间戳同步以识别变动
       args.push("-prefer", "newer");
@@ -329,6 +417,8 @@ export class SyncManager {
         args.push("-backuplocation", "central");
         args.push("-backupdir", task.backupPath);
         args.push("-backupprefix", "bak.$VERSION.");
+        // 注：unison 2.53.8 不支持 -backupdel；凡命中 -backup 模式的文件，
+        // 无论更新还是删除都会默认写入备份目录，无需额外参数。
       } catch (err) {
         console.error("创建备份目录失败:", err);
       }
@@ -341,15 +431,43 @@ export class SyncManager {
       });
     }
 
+    // 增加指定特定路径同步的参数
+    if (specificPaths && specificPaths.length > 0) {
+      specificPaths.forEach(p => {
+        args.push("-path", p);
+      });
+    }
+
     if (task.useParallel) args.push("-maxthreads", "10");
     args.push(task.sourcePath);
     args.push(task.targetPath);
 
-    if (task.direction === "sourceToTarget") args.push("-force", task.sourcePath);
-    else if (task.direction === "targetToSource") args.push("-force", task.targetPath);
-
     const unisonPath = getUnisonPath();
-    const proc = spawn(unisonPath, args);
+    
+    // 关键：将 Unison 元数据存储在应用数据目录下的任务专用文件夹中
+    const taskDataDir = this.getTaskDataDir(task.id);
+    const metadataDir = path.join(taskDataDir, "unison");
+    if (!fs.existsSync(metadataDir)) {
+      fs.mkdirSync(metadataDir, { recursive: true });
+    }
+    
+    const env = { 
+      ...process.env, 
+      UNISON: metadataDir 
+    };
+
+    // 在真正启动进程前再次确认两个根目录均存在，防止磁盘在构建参数期间被卸载
+    // Unison 在根目录不存在时会自动创建，这里严禁这种行为
+    if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
+      const missing = !fs.existsSync(task.sourcePath) ? task.sourcePath : task.targetPath;
+      const errMsg = `同步中止：根目录不存在，拒绝启动 Unison（禁止自动创建根目录）: ${missing}`;
+      console.warn(errMsg);
+      logManager.write(task.id, `[中止] ${errMsg}`);
+      this.updateStatus(task.id, "error");
+      return Promise.resolve(false);
+    }
+
+    const proc = spawn(unisonPath, args, { env });
     this.activeProcesses.set(task.id, proc);
 
     // 记录 pid 到任务数据
@@ -361,12 +479,19 @@ export class SyncManager {
     proc.on("error", (err: any) => {
       this.activeProcesses.delete(task.id);
       syncStore.updateTask(task.id, { pid: undefined });
-      logManager.write(task.id, `启动失败: ${err.message}`);
+      if (this.stopRequested.has(task.id)) {
+        onDone(false);
+        return;
+      }
+      logManager.write(task.id, `启动失败 (${unisonPath}): ${err.message}`);
       this.updateStatus(task.id, "error");
+      onDone(false);
     });
 
     let outputBuffer = "";
     let needsRetry = false;
+    let hasChanges = false; // 标记本次同步是否有文件变动
+    const lastStatsUpdateTime = new Map<string, number>();
 
     const flushBuffer = () => {
       if (outputBuffer) {
@@ -376,7 +501,9 @@ export class SyncManager {
       }
     };
 
-    const checkRetryNeeded = (text: string) => {
+    const checkStatus = (text: string) => {
+      // "Destination updated during synchronization" 很多时候是我们手动操作文件后引擎的防冲突保护
+      // 记录它需要重试，但不要让它显示在正常日志中，免得让用户恐慌
       const retryPatterns = [
         "Destination updated during synchronization",
         "Synchronization incomplete",
@@ -390,20 +517,68 @@ export class SyncManager {
       if (retryPatterns.some(p => text.includes(p))) {
         needsRetry = true;
       }
+
+      // 简单的变更检测逻辑：如果输出包含常见的操作关键词（如 copying, deleting, moved 等），认为有变动
+      // 排除 "Nothing to do" 和 "Looking for changes"
+      const changePatterns = [
+        "copying",
+        "deleting",
+        "moving",
+        "rename",
+        "Updating propagation",
+        "changed",
+        "replaced"
+      ];
+      if (changePatterns.some(p => text.toLowerCase().includes(p.toLowerCase())) && 
+          !text.includes("Nothing to do")) {
+        hasChanges = true;
+      }
     };
 
     proc.stdout.on("data", (data) => {
       const chunk: string = data.toString();
+
+      // 过滤掉我们不希望显示的冗余警告
+      if (chunk.includes("Destination updated during synchronization") || chunk.includes("Synchronization incomplete")) {
+        // 静默处理这个日志，只走内部的 needsRetry 逻辑
+        checkStatus(chunk);
+        return;
+      }
+
       outputBuffer += chunk;
-      checkRetryNeeded(chunk);
-      if (outputBuffer.length > 2000) flushBuffer();
+      checkStatus(chunk);
+      // 即时落盘：unison -terse 模式下 stdout 输出量很小（扫描提示、变更摘要），
+      // 若攒到 2000 字符才 flush，长扫描期间日志会长时间无输出，看起来像卡死。
+      flushBuffer();
     });
 
     proc.stderr.on("data", (data) => {
-      const errorMsg: string = data.toString();
-      checkRetryNeeded(errorMsg);
-      logManager.write(task.id, `[stderr] ${errorMsg}`);
-      this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${errorMsg}` });
+      const chunk: string = data.toString();
+
+      // 同样在 stderr 中过滤
+      if (chunk.includes("Destination updated during synchronization") || chunk.includes("Synchronization incomplete")) {
+        checkStatus(chunk);
+        return;
+      }
+
+      checkStatus(chunk);
+
+      // unison -terse 模式把"复制进度/完成"这类正常信息也写到 stderr，与真正的
+      // 错误/警告混在一起。把明确的正常进度行与警告区分开，避免用户把
+      // [BGN]/[END] 复制进度当成报错（之前统一加 [stderr] / 警告: 前缀误导）。
+      const trimmed = chunk.trimStart();
+      const isProgress =
+        trimmed.startsWith("[BGN]") ||
+        trimmed.startsWith("[END]") ||
+        chunk.includes("Synchronization complete");
+
+      if (isProgress) {
+        logManager.write(task.id, chunk);
+        this.win?.webContents.send("sync-log", { id: task.id, log: chunk });
+      } else {
+        logManager.write(task.id, `[stderr] ${chunk}`);
+        this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${chunk}` });
+      }
     });
 
     proc.on("close", async (code) => {
@@ -411,67 +586,82 @@ export class SyncManager {
       this.activeProcesses.delete(task.id);
       syncStore.updateTask(task.id, { pid: undefined });
 
-      if (code !== 0 && needsRetry) {
-        const msg = `[自动重试] 同步遇到异常 (代码: ${code})，5 秒后尝试重新连接同步...`;
-        logManager.write(task.id, msg);
-        this.win?.webContents.send("sync-log", { id: task.id, log: msg });
-        setTimeout(() => {
-          const tasks = syncStore.getTasks();
-          const currentTask = tasks.find(t => t.id === task.id);
-          if (currentTask) this.runUnison(currentTask);
-        }, 5000);
+      // 任务被主动停止：不重试、不更新状态，直接结束本次同步
+      if (this.stopRequested.has(task.id)) {
+        onDone(false);
         return;
       }
-      
+
+      if (code !== 0 && needsRetry) {
+        if (retryCount >= 3) {
+          const msg = `[错误] 连续重试 ${retryCount} 次后仍然失败，已停止重试。请检查日志或手动处理。`;
+          logManager.write(task.id, msg);
+          this.win?.webContents.send("sync-log", { id: task.id, log: msg });
+          this.updateStatus(task.id, "error");
+          onDone(false);
+          return;
+        }
+
+        const msg = `[自动重试] 检测到同步未完成，1 秒后自动重试... (重试次数: ${retryCount + 1}/3)`;
+        logManager.write(task.id, msg);
+        this.win?.webContents.send("sync-log", { id: task.id, log: msg });
+
+        // 登记重试定时器（可被 stopTask 取消），并在重试真正完成后才解析本次同步，
+        // 避免分批同步时出现“假成功”；重试被取消/跳过时 resolve(false) 让调用方中止剩余批次。
+        const timer = setTimeout(() => {
+          this.pendingRetries.delete(task.id);
+          const currentTask = syncStore.getTasks().find(t => t.id === task.id);
+          if (currentTask) {
+            this.runUnison(currentTask, specificPaths, overrideDirection, retryCount + 1).then(onDone);
+          } else {
+            onDone(false);
+          }
+        }, 1000);
+        this.pendingRetries.set(task.id, { timer, resolve: onDone });
+        return;
+      }
+
       const status = code === 0 ? "idle" : "error";
       const lastSyncTime = new Date().toLocaleString();
       
+      // 优化点：仅在有文件变动，或者距离上次更新超过 10 分钟时才执行昂贵的目录统计
+      const now = Date.now();
+      const lastUpdate = lastStatsUpdateTime.get(task.id) || 0;
+      const shouldUpdateStats = hasChanges || (now - lastUpdate > 10 * 60 * 1000);
+
       if (fs.existsSync(task.sourcePath) && fs.existsSync(task.targetPath)) {
-        Promise.all([
-          getDirStats(task.sourcePath),
-          getDirStats(task.targetPath)
-        ]).then(([sourceStats, targetStats]) => {
-          const sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
-          const targetDisk = diskManager.getDiskSpace(task.targetPath) || undefined;
-
-          syncStore.updateTask(task.id, { 
-            status, 
-            lastSyncTime, 
-            sourceStats, 
-            targetStats,
-            sourceDisk,
-            targetDisk
-          });
-          
-          this.win?.webContents.send("sync-status", { 
-            id: task.id, 
-            status, 
-            lastSyncTime, 
-            sourceStats, 
-            targetStats,
-            sourceDisk,
-            targetDisk
-          });
-        });
-      }
-
-      logManager.write(task.id, `同步结束 (代码: ${code})`);
-
-      this.isCoolingDown.set(task.id, true);
-      setTimeout(() => {
-        this.isCoolingDown.set(task.id, false);
-        if (this.hasPendingSync.get(task.id)) {
-          const tasks = syncStore.getTasks();
-          const currentTask = tasks.find(t => t.id === task.id);
-          if (currentTask) {
-            logManager.write(task.id, "检测到冷却期内的变更，正在追加同步...");
-            this.runUnison(currentTask);
+        const updateTaskData: Partial<SyncTask> = { status, lastSyncTime };
+        
+        if (shouldUpdateStats) {
+          try {
+            const [sourceStats, targetStats] = await Promise.all([
+              getDirStats(task.sourcePath),
+              getDirStats(task.targetPath)
+            ]);
+            updateTaskData.sourceStats = sourceStats;
+            updateTaskData.targetStats = targetStats;
+            lastStatsUpdateTime.set(task.id, now);
+            if (hasChanges) logManager.write(task.id, "[优化] 检测到文件变动，已更新目录统计信息。");
+          } catch (err) {
+            console.error("更新统计信息失败:", err);
           }
         }
-      }, 2000);
-      
+
+        const sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;
+        const targetDisk = diskManager.getDiskSpace(task.targetPath) || undefined;
+        updateTaskData.sourceDisk = sourceDisk;
+        updateTaskData.targetDisk = targetDisk;
+
+        syncStore.updateTask(task.id, updateTaskData);
+        this.win?.webContents.send("sync-status", { id: task.id, ...updateTaskData });
+      }
+
+      logManager.write(task.id, `同步结束 (代码: ${code})${hasChanges ? " [有变动]" : " [无变动]"}`);
       this.onStatusChange?.();
+      onDone(true);
     });
+
+    return exitPromise;
   }
 
   private updateStatus(id: string, status: SyncTask["status"]) {

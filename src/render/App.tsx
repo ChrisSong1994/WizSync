@@ -6,6 +6,7 @@ import { TaskModal } from "./components/TaskModal";
 import { LogModal } from "./components/LogModal";
 import { DiffModal } from "./components/DiffModal";
 import { BackupModal } from "./components/BackupModal";
+import { SettingsModal } from "./components/SettingsModal";
 
 /**
  * 应用主组件，管理所有同步任务的状态和交互
@@ -19,6 +20,7 @@ function App() {
   const [backupTaskId, setBackupTaskId] = useState<string | null>(null); // 当前选中的备份任务 ID
   const [diffData, setDiffData] = useState<DiffResult | null>(null); // 文件差异结果
   const [comparingTaskId, setComparingTaskId] = useState<string | null>(null); // 正在执行对比的任务 ID
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false); // 是否显示设置弹窗
 
   useEffect(() => {
     // 初始加载任务列表
@@ -107,7 +109,14 @@ function App() {
         }
       }
 
-      const updatedTasks = await window.electronAPI.saveTask(currentTask as SyncTask);
+      let updatedTasks: SyncTask[];
+      try {
+        updatedTasks = await window.electronAPI.saveTask(currentTask as SyncTask);
+      } catch (err: any) {
+        // 主进程校验（如跨任务根目录重叠）失败时把错误展示在表单里
+        setModalError(err?.message || "保存失败，请重试。");
+        return;
+      }
       setTasks(updatedTasks);
       setIsModalOpen(false);
       setCurrentTask(null);
@@ -143,12 +152,17 @@ function App() {
    * 对比两个目录的差异
    */
   const handleCompare = async (taskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || task.status === "syncing") return;
+
     setComparingTaskId(taskId);
     setDiffData(null);
     try {
       const result = await window.electronAPI.compareDirectories(taskId);
       setDiffData(result);
-    } catch (error) {
+    } catch (error: any) {
+      // 用户主动取消对比：UI 已关闭，静默忽略
+      if (error?.message === "compare-cancelled") return;
       console.error("对比失败:", error);
       setComparingTaskId(null);
     }
@@ -156,7 +170,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
-      <Header onAddTask={handleAddTask} />
+      <Header onAddTask={handleAddTask} onOpenSettings={() => setIsSettingsOpen(true)} />
       
       <TaskList
         tasks={tasks}
@@ -167,6 +181,10 @@ function App() {
         onCompare={handleCompare}
         onShowBackup={setBackupTaskId}
       />
+
+      {isSettingsOpen && (
+        <SettingsModal onClose={() => setIsSettingsOpen(false)} />
+      )}
 
       {isModalOpen && (
         <TaskModal
@@ -199,6 +217,7 @@ function App() {
           tasks={tasks}
           diffData={diffData}
           onClose={() => setComparingTaskId(null)}
+          onDiffUpdate={setDiffData}
         />
       )}
 

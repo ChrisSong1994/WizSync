@@ -1,16 +1,17 @@
 {
   "name": "wizsync",
-  "version": "1.0.2",
+  "version": "1.0.7",
   "description": "Clean and professional directory sync app powered by Unison",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "start": "npm run dev",
-    "build": "tsc && vite build && electron-builder"
+    "build": "tsc && vite build && electron-builder",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "chokidar": "^3.5.3",
     "clsx": "^2.1.0",
     "electron-store": "^8.1.0",
     "lucide-react": "^0.363.0",
@@ -24,6 +25,7 @@
     "directories": {
       "output": "release"
     },
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
     "asarUnpack": [
       "src/resources/bin/**/*"
     ],
@@ -39,12 +41,6 @@
         "dmg",
         "zip"
       ]
-    },
-    "win": {
-      "icon": "public/assets/icon-512.png",
-      "target": [
-        "nsis"
-      ]
     }
   },
   "devDependencies": {
@@ -57,8 +53,9 @@
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.4.2",
-    "vite": "^5.1.6",
+    "vite": "^7.3.6",
     "vite-plugin-electron": "^0.28.4",
-    "vite-plugin-electron-renderer": "^0.14.5"
+    "vite-plugin-electron-renderer": "^0.14.5",
+    "vitest": "^4.1.10"
   }
 }

@@ -24,6 +24,8 @@ interface DiffModalProps {
   tasks: SyncTask[];
   diffData: DiffResult | null;
   onClose: () => void;
+  /** 全量同步完成后由主进程返回协调后的新对比结果，用于刷新显示 */
+  onDiffUpdate?: (diff: DiffResult) => void;
 }
 
 export const DiffModal: React.FC<DiffModalProps> = ({
@@ -31,6 +33,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   tasks,
   diffData,
   onClose,
+  onDiffUpdate,
 }) => {
   const [ignorePatterns, setIgnorePatterns] = useState<string[]>([]);
   const [scanCount, setScanCount] = useState(0);
@@ -83,7 +86,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   };
 
   const handleDelete = async (filePath: string, side: 'source' | 'target') => {
-    if (!await window.electronAPI.showConfirm(`确定要删除${side === 'source' ? '源目录' : '目标目录'}中的文件吗？\n${filePath}`)) return;
+    if (!await window.electronAPI.showConfirm(`确定要删除${side === 'source' ? '源目录' : '目标目录'}中的文件吗？\n${filePath}\n\n文件将移入系统废纸篓，可恢复。`)) return;
 
     const success = await window.electronAPI.deleteFile(taskId, filePath, side);
     if (success) {
@@ -111,6 +114,15 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     }
   };
 
+  // 批量操作：一次 IPC 调用交给主进程批量处理，避免逐文件启动 Unison 进程
+  const markAllResolved = (files: { path: string }[]) => {
+    setResolvedPaths(prev => {
+      const next = new Set(prev);
+      files.forEach(f => next.add(f.path));
+      return next;
+    });
+  };
+
   const handleSyncAll = async (
     files: { path: string }[],
     direction: 'sourceToTarget' | 'targetToSource',
@@ -118,11 +130,18 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   ) => {
     if (!await window.electronAPI.showConfirm(`确定要同步全部 ${files.length} 个文件吗？`)) return;
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
-    for (const file of files) {
-      const success = await window.electronAPI.syncSingleFile(taskId, file.path, direction);
-      if (success) setResolvedPaths(prev => new Set(prev).add(file.path));
+    try {
+      const result = await window.electronAPI.syncFiles(taskId, files.map(f => f.path), direction);
+      if (result.ok && result.diff) {
+        // 全量同步后主进程已重新对比，用协调后的真实差异替换展示
+        onDiffUpdate?.(result.diff);
+        setResolvedPaths(new Set());
+      } else if (result.ok) {
+        markAllResolved(files);
+      }
+    } finally {
+      setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
     }
-    setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
 
   const handleDeleteAll = async (
@@ -130,12 +149,18 @@ export const DiffModal: React.FC<DiffModalProps> = ({
     side: 'source' | 'target',
     sectionKey: string,
   ) => {
-    if (!await window.electronAPI.showConfirm(`确定要删除全部 ${files.length} 个文件吗？此操作不可撤销。`)) return;
+    if (!await window.electronAPI.showConfirm(`确定要删除全部 ${files.length} 个文件吗？文件将移入系统废纸篓。`)) return;
     setBatchSyncing(prev => new Set(prev).add(sectionKey));
-    for (const file of files) {
-      const success = await window.electronAPI.deleteFile(taskId, file.path, side);
-      if (success) setResolvedPaths(prev => new Set(prev).add(file.path));
-    }
+    const success = await window.electronAPI.deleteFiles(taskId, files.map(f => f.path), side);
+    if (success) markAllResolved(files);
+    setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
+  };
+
+  const handleIgnoreAll = async (files: { path: string }[], sectionKey: string) => {
+    if (!await window.electronAPI.showConfirm(`确定要忽略全部 ${files.length} 个文件吗？`)) return;
+    setBatchSyncing(prev => new Set(prev).add(sectionKey));
+    const success = await window.electronAPI.ignorePaths(taskId, files.map(f => f.path));
+    if (success) markAllResolved(files);
     setBatchSyncing(prev => { const next = new Set(prev); next.delete(sectionKey); return next; });
   };
 
@@ -179,6 +204,15 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                 </div>
               </div>
               <p className="font-bold text-slate-700">已检索 {scanCount.toLocaleString()} 个文件...</p>
+              <button
+                onClick={async () => {
+                  await window.electronAPI.cancelCompare();
+                  onClose();
+                }}
+                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium transition-colors"
+              >
+                取消对比
+              </button>
             </div>
           ) : (
             <>
@@ -320,7 +354,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleSyncAll(activeSourceOnly, 'sourceToTarget', 'sourceOnly')}
-                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete')}
+                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete') || batchSyncing.has('sourceOnlyIgnore')}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
                           >
                             {batchSyncing.has('sourceOnly') ? (
@@ -331,8 +365,20 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                             全部同步到目标端
                           </button>
                           <button
+                            onClick={() => handleIgnoreAll(activeSourceOnly, 'sourceOnlyIgnore')}
+                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete') || batchSyncing.has('sourceOnlyIgnore')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-500 hover:bg-slate-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('sourceOnlyIgnore') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <EyeOff size={12} />
+                            )}
+                            全部忽略
+                          </button>
+                          <button
                             onClick={() => handleDeleteAll(activeSourceOnly, 'source', 'sourceOnlyDelete')}
-                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete')}
+                            disabled={batchSyncing.has('sourceOnly') || batchSyncing.has('sourceOnlyDelete') || batchSyncing.has('sourceOnlyIgnore')}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
                           >
                             {batchSyncing.has('sourceOnlyDelete') ? (
@@ -356,7 +402,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                                 >
                                   <MapPin size={14} />
                                 </button>
-                                <span className="text-sm font-mono text-slate-700 truncate max-w-md">{file.path}</span>
+                                <span className="text-sm font-mono text-slate-700 truncate max-w-md" title={file.path}>{file.path}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-[11px] font-bold text-blue-600 mr-2">{formatSize(file.size)}</span>
@@ -409,7 +455,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleSyncAll(activeTargetOnly, 'targetToSource', 'targetOnly')}
-                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete')}
+                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete') || batchSyncing.has('targetOnlyIgnore')}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
                           >
                             {batchSyncing.has('targetOnly') ? (
@@ -420,8 +466,20 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                             全部同步到源端
                           </button>
                           <button
+                            onClick={() => handleIgnoreAll(activeTargetOnly, 'targetOnlyIgnore')}
+                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete') || batchSyncing.has('targetOnlyIgnore')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-500 hover:bg-slate-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('targetOnlyIgnore') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <EyeOff size={12} />
+                            )}
+                            全部忽略
+                          </button>
+                          <button
                             onClick={() => handleDeleteAll(activeTargetOnly, 'target', 'targetOnlyDelete')}
-                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete')}
+                            disabled={batchSyncing.has('targetOnly') || batchSyncing.has('targetOnlyDelete') || batchSyncing.has('targetOnlyIgnore')}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
                           >
                             {batchSyncing.has('targetOnlyDelete') ? (
@@ -445,7 +503,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                                 >
                                   <MapPin size={14} />
                                 </button>
-                                <span className="text-sm font-mono text-slate-700 truncate max-w-md">{file.path}</span>
+                                <span className="text-sm font-mono text-slate-700 truncate max-w-md" title={file.path}>{file.path}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-[11px] font-bold text-emerald-600 mr-2">{formatSize(file.size)}</span>
@@ -498,7 +556,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                         <div className="space-y-2">
                           {diffData.ignored.filter(f => !unignoredPaths.has(f.path)).map((file, i) => (
                             <div key={i} className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex items-center justify-between group hover:border-slate-200 transition-colors">
-                              <span className="text-sm font-mono text-slate-500 truncate max-w-md opacity-60">{file.path}</span>
+                              <span className="text-sm font-mono text-slate-500 truncate max-w-md opacity-60" title={file.path}>{file.path}</span>
                               <div className="flex items-center gap-3">
                                 <span className="text-[10px] text-slate-400 font-bold uppercase opacity-60">
                                   {file.side === 'both' ? '双端存在' : file.side === 'source' ? '仅源端' : '仅目标端'}

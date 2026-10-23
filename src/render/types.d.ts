@@ -3,18 +3,20 @@ export interface SyncTask {
   name: string
   sourcePath: string
   targetPath: string
-  mode: 'realtime' | 'scheduled' | 'manual'
+  mode: 'scheduled' | 'manual'
   interval?: number
   direction: 'bidirectional' | 'sourceToTarget' | 'targetToSource'
   status: 'idle' | 'syncing' | 'error'
   lastSyncTime?: string
   useParallel?: boolean
+  useFat?: boolean
   sourceStats?: { size: number; count: number }
   targetStats?: { size: number; count: number }
-  sourceDisk?: { total: number; free: number }
-  targetDisk?: { total: number; free: number }
+  sourceDisk?: { name: string; total: number; free: number }
+  targetDisk?: { name: string; total: number; free: number }
   ignoredPaths?: string[]
   backupPath?: string
+  backupRetentionDays?: number
   pid?: number
 }
 
@@ -30,6 +32,7 @@ export interface DiffResult {
   sourceOnly: { path: string; size: number }[]
   targetOnly: { path: string; size: number }[]
   different: { path: string; sourceSize: number; targetSize: number; sourceMtime: number; targetMtime: number }[]
+  renamed: { oldPath: string; newPath: string; size: number; side: 'sourceToTarget' | 'targetToSource' }[]
   ignored: { path: string; size: number; side: 'source' | 'target' | 'both' }[]
 }
 
@@ -43,18 +46,26 @@ export interface ElectronAPI {
   resetSync: (id: string) => Promise<boolean>
   selectDirectory: () => Promise<string | null>
   compareDirectories: (id: string) => Promise<DiffResult>
+  cancelCompare: () => Promise<boolean>
   getPersistentLogs: (id: string) => Promise<string>
   clearPersistentLogs: (id: string) => Promise<boolean>
   openLogFolder: (id: string) => Promise<boolean>
+  getAppDataPath: () => Promise<string>
+  getAppVersion: () => Promise<string>
+  openAppDataFolder: () => Promise<boolean>
+  quitApp: () => Promise<boolean>
   getIgnorePatterns: () => Promise<string[]>
   getDefaultBackupPath: (taskId: string) => Promise<string>
   listBackupFiles: (taskId: string) => Promise<BackupFile[]>
   openBackupFolder: (taskId: string) => Promise<boolean>
-  revealBackupFile: (filePath: string) => Promise<boolean>
-  deleteBackupFile: (filePath: string) => Promise<boolean>
+  revealBackupFile: (taskId: string, filePath: string) => Promise<boolean>
+  deleteBackupFile: (taskId: string, filePath: string) => Promise<boolean>
   syncSingleFile: (taskId: string, filePath: string, direction: 'sourceToTarget' | 'targetToSource') => Promise<boolean>
+  syncFiles: (taskId: string, filePaths: string[], direction: 'sourceToTarget' | 'targetToSource') => Promise<{ ok: boolean; diff?: DiffResult }>
   deleteFile: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
+  deleteFiles: (taskId: string, filePaths: string[], side: 'source' | 'target') => Promise<boolean>
   ignorePath: (taskId: string, filePath: string) => Promise<boolean>
+  ignorePaths: (taskId: string, filePaths: string[]) => Promise<boolean>
   unignorePath: (taskId: string, filePath: string) => Promise<boolean>
   revealInFileExplorer: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
   onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; sourceStats?: any; targetStats?: any }) => void) => void

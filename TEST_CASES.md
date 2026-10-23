@@ -4,8 +4,8 @@
 
 ## 测试环境准备
 
-- 将 SD 卡挂载，确认路径（如 `/Volumes/SDCARD`）
-- 在 SD 卡上创建测试目录：`/Volumes/SDCARD/wizsync-test/source`
+- 将 SD 卡挂载，确认路径（如 `/Volumes/MySD`）
+- 在 SD 卡上创建测试目录：`/Volumes/MySD/wizsync-test/source`
 - 本地创建目标目录：`~/Desktop/wizsync-test/target`
 - 准备测试文件：文本文件、图片、子目录结构
 

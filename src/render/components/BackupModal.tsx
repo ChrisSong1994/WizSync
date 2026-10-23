@@ -100,7 +100,7 @@ const TreeItem: React.FC<TreeItemProps> = ({ node, depth, onDelete, onReveal }) 
     >
       <div className="flex items-center gap-2 min-w-0">
         <FileIcon size={14} className="text-slate-300 flex-shrink-0" />
-        <span className="text-sm text-slate-700 truncate" title={node.relativePath}>
+        <span className="text-sm text-slate-700 truncate" title={node.fullPath}>
           {node.name}
         </span>
       </div>
@@ -160,7 +160,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({ taskId, tasks, onClose
 
   const handleDeleteFile = async (file: BackupFile) => {
     if (!await window.electronAPI.showConfirm(`确定要删除此备份文件吗？\n${file.name}`)) return;
-    const success = await window.electronAPI.deleteBackupFile(file.path);
+    const success = await window.electronAPI.deleteBackupFile(taskId, file.path);
     if (success) {
       setBackupFiles((prev) => prev.filter((f) => f.path !== file.path));
     } else {
@@ -239,7 +239,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({ taskId, tasks, onClose
                   node={node}
                   depth={0}
                   onDelete={handleDeleteFile}
-                  onReveal={(p) => window.electronAPI.revealBackupFile(p)}
+                  onReveal={(p) => window.electronAPI.revealBackupFile(taskId, p)}
                 />
               ))}
             </div>

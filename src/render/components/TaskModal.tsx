@@ -116,6 +116,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           </div>
 
+          {/* 单向 = 镜像 警告 */}
+          {(currentTask?.direction === "sourceToTarget" || currentTask?.direction === "targetToSource") && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 rounded-xl text-xs font-bold animate-in slide-in-from-top-2 duration-200">
+              ⚠️ 单向同步 = 镜像模式：目标端存在但源端不存在的文件将被自动删除，且无二次确认。请确认方向设置无误。
+            </div>
+          )}
+
           {/* 执行策略 */}
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-slate-700 ml-1">
@@ -123,7 +130,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </label>
             <div className="grid grid-cols-3 gap-2">
               {[
-                { id: "realtime", label: "实时监控", icon: Zap },
                 { id: "scheduled", label: "定时检查", icon: Clock },
                 { id: "manual", label: "手动执行", icon: Play },
               ].map((mode) => (
@@ -184,6 +190,51 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 </span>
               </div>
             </label>
+          </div>
+
+          {/* FAT 兼容开关（默认开启） */}
+          <div className="pt-2">
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <div
+                onClick={() => onChange({ useFat: currentTask?.useFat === false })}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative flex items-center px-1",
+                  currentTask?.useFat !== false ? "bg-blue-600" : "bg-slate-200",
+                )}
+              >
+                <div
+                  className={cn(
+                    "w-4 h-4 bg-white rounded-full shadow-sm transition-all transform",
+                    currentTask?.useFat !== false ? "translate-x-6" : "translate-x-0",
+                  )}
+                />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-slate-700">
+                  FAT 文件系统兼容
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  目标为 U 盘等 FAT/exFAT 卷时保持开启；大小写敏感卷可关闭
+                </span>
+              </div>
+            </label>
+          </div>
+
+          {/* 备份保留期 */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-bold text-slate-700 ml-1">
+              备份保留天数
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={currentTask?.backupRetentionDays || 30}
+              onChange={(e) => onChange({ backupRetentionDays: parseInt(e.target.value) })}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+            />
+            <p className="text-[11px] text-slate-400 ml-1">
+              备份目录中超过该天数的旧文件会被自动清理，默认 30 天
+            </p>
           </div>
         </div>
 
