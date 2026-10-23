@@ -15,7 +15,7 @@ WizSync 是一款基于 **Electron** 和 [**Unison**](https://github.com/bcpierc
   - **定时检查**：按设定的分钟间隔自动执行。
   - **手动执行**：仅在点击同步按钮时运行。
   - 手动操作（如对比、忽略）完成后会自动触发增量同步；磁盘重连后自动恢复错误状态的定时任务。
-- 📦 **开箱即用**：内置针对 macOS (Apple Silicon/Intel) 优化的 Unison 二进制文件，无需用户手动安装依赖。
+- 📦 **开箱即用**：内置针对 macOS (Apple Silicon/Intel)、Windows (x64) 与 Linux (x64) 的 Unison 二进制文件，无需用户手动安装依赖。
 - 📊 **可视化仪表盘**：
   - 实时查看同步状态与进度。
   - 详尽的统计信息（文件总数、目录大小）。

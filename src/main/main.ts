@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, session } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, session, Menu } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
@@ -7,7 +7,7 @@ import { syncStore } from "./libs/sync-store";
 import { syncManager } from "./libs/sync-manager";
 import { logManager } from "./libs/logs";
 import { TrayManager } from "./libs/tray";
-import { getDirStats, getAllFiles, computeDirDiff, IGNORE_PATTERNS, resolveInside, resolveExistingRelativePath } from "./libs/fs-utils";
+import { getDirStats, getAllFiles, computeDirDiff, IGNORE_PATTERNS, resolveInside, resolveExistingRelativePath, isPathInside } from "./libs/fs-utils";
 import { diskManager } from "./libs/disk";
 import { SyncTask, DiffResult } from "./libs/types";
 
@@ -19,20 +19,34 @@ if (process.platform === "darwin") {
   process.env.PATH = `${process.env.PATH}:/usr/local/bin:/opt/homebrew/bin:/opt/local/bin`;
 }
 
+// Windows 任务栏/托盘分组与通知需要显式的 AppUserModelID
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.wizsync.app");
+}
+
 process.env.APP_ROOT = APP_ROOT;
+
+/**
+ * 平台/架构对应的二进制目录名，例如 darwin-arm64、win32-x64、linux-x64。
+ */
+function getUnisonPlatformDir(): string {
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  return `${process.platform}-${arch}`;
+}
 
 /**
  * 获取 Unison 二进制文件的路径
  */
 export function getUnisonPath(): string {
-  const arch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
+  const platformDir = getUnisonPlatformDir();
+  const binName = process.platform === "win32" ? "unison.exe" : "unison";
 
   // 使用 app.getAppPath() 获取应用根目录
   let resourcePath = path.join(
     app.getAppPath(),
     "src/resources/bin",
-    arch,
-    "unison",
+    platformDir,
+    binName,
   );
 
   // 处理 ASAR unpack 后的路径
@@ -40,14 +54,21 @@ export function getUnisonPath(): string {
     resourcePath = resourcePath.replace("app.asar", "app.asar.unpacked");
   }
 
-  // 确保二进制文件具有可执行权限
+  // 确保二进制文件具有可执行权限（Windows 不需要）
   try {
     if (fs.existsSync(resourcePath)) {
-      const stats = fs.statSync(resourcePath);
-      // 如果没有执行权限 (0o111)，则添加权限
-      if (!(stats.mode & 0o111)) {
-        fs.chmodSync(resourcePath, 0o755);
+      if (process.platform !== "win32") {
+        const stats = fs.statSync(resourcePath);
+        // 如果没有执行权限 (0o111)，则添加权限
+        if (!(stats.mode & 0o111)) {
+          fs.chmodSync(resourcePath, 0o755);
+        }
       }
+    } else {
+      console.error(
+        `未找到内置 Unison 二进制: ${resourcePath}。` +
+          `Linux/Windows 开发环境请先执行 "pnpm fetch:unison" 下载对应平台二进制。`,
+      );
     }
   } catch (err) {
     console.error("修复二进制权限失败:", err);
@@ -171,6 +192,12 @@ app.whenReady().then(() => {
     });
   }
 
+  // Windows/Linux 默认菜单（File/Edit/View…）与应用界面不搭，直接移除；
+  // macOS 保留默认菜单以提供 Cmd+Q、复制粘贴等标准快捷键。
+  if (process.platform !== "darwin") {
+    Menu.setApplicationMenu(null);
+  }
+
   createWindow();
   trayManager.createTray(createWindow);
 
@@ -258,6 +285,8 @@ function getRetentionMs(task: SyncTask): number {
  * 仅在应用启动时（尚未派生任何同步进程）调用，因此命中的必然不是本实例的子进程。
  */
 function cleanupOrphanedUnison() {
+  // 依赖 ps 扫描进程环境变量，目前仅支持 POSIX 系统
+  if (process.platform === "win32") return;
   const marker = path.join(app.getPath("userData"), "task-data");
   try {
     const out = execSync("ps eww -axo pid=,command=", {
@@ -290,10 +319,8 @@ function canonicalRoot(p: string): string {
 function rootsOverlap(a: string, b: string): boolean {
   const ca = canonicalRoot(a);
   const cb = canonicalRoot(b);
-  if (ca === cb) return true;
-  const aWithSep = ca.endsWith(path.sep) ? ca : ca + path.sep;
-  const bWithSep = cb.endsWith(path.sep) ? cb : cb + path.sep;
-  return aWithSep.startsWith(bWithSep) || bWithSep.startsWith(aWithSep);
+  // isPathInside 已处理大小写不敏感文件系统与根目录分隔符
+  return isPathInside(ca, cb) || isPathInside(cb, ca);
 }
 
 /** 检查新任务与现有任务是否存在根目录重叠，返回错误信息或 null */

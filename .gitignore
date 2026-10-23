@@ -4,3 +4,6 @@ dist-*
 release
 .DS_Store
 *.orig
+# Windows/Linux 的 Unison 二进制由 `pnpm fetch:unison` 按需下载，不提交到仓库
+src/resources/bin/win32-*/
+src/resources/bin/linux-*/
