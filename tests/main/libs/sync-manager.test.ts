@@ -16,6 +16,18 @@ const fakeProc = vi.hoisted(() => {
       (this.handlers[event] ||= []).push(cb);
       return this;
     }
+    once(event: string, cb: Handler) {
+      const wrapper: Handler = (...args: any[]) => {
+        this.off(event, wrapper);
+        cb(...args);
+      };
+      (this.handlers[event] ||= []).push(wrapper);
+      return this;
+    }
+    off(event: string, cb: Handler) {
+      this.handlers[event] = (this.handlers[event] || []).filter((h) => h !== cb);
+      return this;
+    }
     emit(event: string, ...args: any[]) {
       (this.handlers[event] || []).slice().forEach((cb) => cb(...args));
       return this;
@@ -23,6 +35,8 @@ const fakeProc = vi.hoisted(() => {
   }
   class FakeProc extends Emitter {
     pid = 4242;
+    exitCode: number | null = null;
+    signalCode: string | null = null;
     stdout = new Emitter();
     stderr = new Emitter();
     kill = () => {};
@@ -208,7 +222,8 @@ describe("SyncManager Unison 参数构建", () => {
 
     const args = lastArgs();
     expect(args).toContain("-batch");
-    expect(args).toContain("-terse");
+    // 不再使用 -terse：需要打印 unison 完整同步日志
+    expect(args).not.toContain("-terse");
     expect(args).toContain("-prefer");
     expect(args).toContain("newer");
     expect(args).toContain("-ignore");
@@ -342,5 +357,23 @@ describe("SyncManager 调度逻辑", () => {
 
     expect(updateTaskSpy).toHaveBeenCalledWith("t-stop", { pid: undefined });
     expect(updateTaskSpy).toHaveBeenLastCalledWith("t-stop", { status: "idle" });
+  });
+
+  it("stopTask 立即终止正在运行的同步进程（发送 SIGTERM）", async () => {
+    const { src, tgt } = makeDirs();
+    const task = makeTask("t-kill", { sourcePath: src, targetPath: tgt });
+    syncStore.saveTask(task);
+
+    await manager.startTask(task);
+    const proc = mockedSpawn.mock.results[mockedSpawn.mock.results.length - 1].value as any;
+    const killSpy = vi.spyOn(proc, "kill");
+
+    const stopPromise = manager.stopTask("t-kill");
+    // 应立刻发送 SIGTERM，而不是等 3 秒兜底的 SIGKILL
+    expect(killSpy).toHaveBeenCalledWith("SIGTERM");
+
+    // 模拟进程被终止后的 close 事件，让 stopTask 正常收尾
+    proc.emit("close", 0);
+    await stopPromise;
   });
 });

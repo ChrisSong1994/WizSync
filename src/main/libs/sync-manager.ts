@@ -59,14 +59,14 @@ export class SyncManager {
       const task = tasks.find(t => t.id === id);
       if (task) {
         if (paths && paths.length > 0) {
-          logManager.write(id, `[自动同步] 手动操作已完成，正在对 ${paths.length} 个路径执行增量同步...`);
+          this.log(id, `[自动同步] 手动操作已完成，正在对 ${paths.length} 个路径执行增量同步...`);
           try {
             await this.runSpecificPathsChunked(task, paths);
           } catch (err: any) {
-            logManager.write(id, `[自动同步] 增量同步失败: ${err?.message ?? String(err)}`);
+            this.log(id, `[自动同步] 增量同步失败: ${err?.message ?? String(err)}`);
           }
         } else {
-          logManager.write(id, "[自动同步] 手动操作已完成，正在执行增量扫描...");
+          this.log(id, "[自动同步] 手动操作已完成，正在执行增量扫描...");
           await this.startTask(task);
         }
       }
@@ -128,13 +128,23 @@ export class SyncManager {
     
     // 如果是定时任务且当前处于错误状态（通常是由于之前的离线导致的），则尝试重新启动
     if (task && task.mode === "scheduled" && task.status === "error") {
-      logManager.write(taskId, "[磁盘监控] 检测到磁盘已重连，正在尝试自动恢复同步...");
+      this.log(taskId, "[磁盘监控] 检测到磁盘已重连，正在尝试自动恢复同步...");
       this.startTask(task);
     }
   }
 
   setStatusChangeCallback(cb: () => void) {
     this.onStatusChange = cb;
+  }
+
+  /**
+   * 写入持久化日志，并同时推送到渲染进程（LogModal 实时展示）。
+   * 之前生命周期日志（任务启动 / 状态更新 / PID / 同步结束等）只落盘、未 send，
+   * 导致同步过程中 LogModal 只能靠打开时一次性加载持久化日志，收不到实时日志。
+   */
+  private log(id: string, content: string) {
+    logManager.write(id, content);
+    this.win?.webContents.send("sync-log", { id, log: content });
   }
 
   public getLogs(id: string): string {
@@ -159,9 +169,9 @@ export class SyncManager {
   public async resetTask(task: SyncTask) {
     // stopTask 会等待进程真正退出（close 事件）后再返回，归档目录可安全清理
     await this.stopTask(task.id);
-    logManager.write(task.id, "=== 强制重置同步缓存 (Archive) ===");
+    this.log(task.id, "=== 强制重置同步缓存 (Archive) ===");
     await this.cleanUnisonArchives(task);
-    logManager.write(task.id, "缓存清理完成，正在重新初始化同步...");
+    this.log(task.id, "缓存清理完成，正在重新初始化同步...");
     this.startTask(task);
   }
 
@@ -172,10 +182,10 @@ export class SyncManager {
       try {
         if (fs.existsSync(metadataDir)) {
           fs.rmSync(metadataDir, { recursive: true, force: true });
-          logManager.write(task.id, `[清理] 已删除应用数据目录下的元数据: ${metadataDir}`);
+          this.log(task.id, `[清理] 已删除应用数据目录下的元数据: ${metadataDir}`);
         }
       } catch (err: any) {
-        logManager.write(task.id, `[警告] 清理元数据目录失败: ${err.message}`);
+        this.log(task.id, `[警告] 清理元数据目录失败: ${err.message}`);
       }
       resolve();
     });
@@ -191,13 +201,12 @@ export class SyncManager {
     if (!fs.existsSync(task.sourcePath) || !fs.existsSync(task.targetPath)) {
       const offlinePath = !fs.existsSync(task.sourcePath) ? "源目录" : "目标目录";
       const errorMsg = `启动失败：${offlinePath} 已离线。`;
-      logManager.write(task.id, errorMsg);
-      this.win?.webContents.send("sync-log", { id: task.id, log: errorMsg });
+      this.log(task.id, errorMsg);
       this.updateStatus(task.id, "error");
       return;
     }
 
-    logManager.write(task.id, `=== 任务启动 [模式: ${task.mode}] ===`);
+    this.log(task.id, `=== 任务启动 [模式: ${task.mode}] ===`);
     this.runUnison(task);
 
     if (task.mode === "scheduled") {
@@ -228,10 +237,13 @@ export class SyncManager {
     this.activeProcesses.delete(id);
     syncStore.updateTask(id, { pid: undefined });
 
-    // 进程仍在运行：标记停止并等待 close 事件，确保 close 处理器在 stopRequested 下
-    // 跳过重试/状态更新，然后再移除标记，避免竞态导致停止后任务复活
+    // 进程仍在运行：立即发终止信号，再等待 close 事件；确保 close 处理器在
+    // stopRequested 下跳过重试/状态更新，然后再移除标记，避免竞态导致停止后任务复活
     if (proc && proc.exitCode === null && proc.signalCode === null) {
       this.stopRequested.add(id);
+      this.log(id, "[停止] 正在终止同步进程...");
+      // 立即终止：POSIX 上为优雅 SIGTERM（unison 会清理退出），Windows 上为强制终止
+      try { proc.kill("SIGTERM"); } catch {}
       await new Promise<void>((resolve) => {
         let done = false;
         const finish = () => { if (!done) { done = true; resolve(); } };
@@ -286,8 +298,7 @@ export class SyncManager {
 
   private handleOffline(task: SyncTask) {
     const errorMsg = `同步挂起：检测到磁盘离线或路径失效。`;
-    logManager.write(task.id, errorMsg);
-    this.win?.webContents.send("sync-log", { id: task.id, log: errorMsg });
+    this.log(task.id, errorMsg);
     this.updateStatus(task.id, "error");
     
     // 注意：不再主动停止定时器。定时器在触发时会继续检查磁盘状态。
@@ -354,7 +365,7 @@ export class SyncManager {
     if (isPathInside(srcReal, tgtReal) && isPathInside(tgtReal, srcReal)) {
       const errMsg = `路径配置错误：源目录与目标目录解析后指向同一真实路径，拒绝同步。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
       console.error(errMsg);
-      logManager.write(task.id, `[错误] ${errMsg}`);
+      this.log(task.id, `[错误] ${errMsg}`);
       this.updateStatus(task.id, "error");
       return Promise.resolve(false);
     }
@@ -362,7 +373,7 @@ export class SyncManager {
     if (isPathInside(srcReal, tgtReal) || isPathInside(tgtReal, srcReal)) {
       const errMsg = `路径配置错误：源目录与目标目录存在嵌套关系（含 symlink 解析后），这会导致同步时递归创建同名目录。请检查任务配置。\n源: ${task.sourcePath} → ${srcReal}\n目标: ${task.targetPath} → ${tgtReal}`;
       console.error(errMsg);
-      logManager.write(task.id, `[错误] ${errMsg}`);
+      this.log(task.id, `[错误] ${errMsg}`);
       this.updateStatus(task.id, "error");
       return Promise.resolve(false);
     }
@@ -371,7 +382,6 @@ export class SyncManager {
 
     const args = [
       "-batch",
-      "-terse",
       "-copyonconflict",
       "-ignoreinodenumbers",
       "-dontchmod",
@@ -470,10 +480,13 @@ export class SyncManager {
       const missing = !fs.existsSync(task.sourcePath) ? task.sourcePath : task.targetPath;
       const errMsg = `同步中止：根目录不存在，拒绝启动 Unison（禁止自动创建根目录）: ${missing}`;
       console.warn(errMsg);
-      logManager.write(task.id, `[中止] ${errMsg}`);
+      this.log(task.id, `[中止] ${errMsg}`);
       this.updateStatus(task.id, "error");
       return Promise.resolve(false);
     }
+
+    // 打印完整 unison 命令行，便于排查同步问题
+    this.log(task.id, `[Unison] 命令: ${unisonPath} ${args.join(" ")}`);
 
     const proc = spawn(unisonPath, args, { env });
     this.activeProcesses.set(task.id, proc);
@@ -481,7 +494,7 @@ export class SyncManager {
     // 记录 pid 到任务数据
     if (proc.pid) {
       syncStore.updateTask(task.id, { pid: proc.pid });
-      logManager.write(task.id, `[进程] PID: ${proc.pid}`);
+      this.log(task.id, `[进程] PID: ${proc.pid}`);
     }
 
     proc.on("error", (err: any) => {
@@ -491,7 +504,7 @@ export class SyncManager {
         onDone(false);
         return;
       }
-      logManager.write(task.id, `启动失败 (${unisonPath}): ${err.message}`);
+      this.log(task.id, `启动失败 (${unisonPath}): ${err.message}`);
       this.updateStatus(task.id, "error");
       onDone(false);
     });
@@ -503,8 +516,7 @@ export class SyncManager {
 
     const flushBuffer = () => {
       if (outputBuffer) {
-        logManager.write(task.id, outputBuffer);
-        this.win?.webContents.send("sync-log", { id: task.id, log: outputBuffer });
+        this.log(task.id, outputBuffer);
         outputBuffer = "";
       }
     };
@@ -555,8 +567,8 @@ export class SyncManager {
 
       outputBuffer += chunk;
       checkStatus(chunk);
-      // 即时落盘：unison -terse 模式下 stdout 输出量很小（扫描提示、变更摘要），
-      // 若攒到 2000 字符才 flush，长扫描期间日志会长时间无输出，看起来像卡死。
+      // 即时落盘：实时把 unison 的同步日志写入磁盘并推送到 LogModal，
+      // 避免长扫描期间日志长时间无输出，看起来像卡死。
       flushBuffer();
     });
 
@@ -571,9 +583,7 @@ export class SyncManager {
 
       checkStatus(chunk);
 
-      // unison -terse 模式把"复制进度/完成"这类正常信息也写到 stderr，与真正的
-      // 错误/警告混在一起。把明确的正常进度行与警告区分开，避免用户把
-      // [BGN]/[END] 复制进度当成报错（之前统一加 [stderr] / 警告: 前缀误导）。
+      // 把明确的正常进度行与警告区分开，避免用户把 [BGN]/[END] 复制进度当成报错。
       const trimmed = chunk.trimStart();
       const isProgress =
         trimmed.startsWith("[BGN]") ||
@@ -581,8 +591,7 @@ export class SyncManager {
         chunk.includes("Synchronization complete");
 
       if (isProgress) {
-        logManager.write(task.id, chunk);
-        this.win?.webContents.send("sync-log", { id: task.id, log: chunk });
+        this.log(task.id, chunk);
       } else {
         logManager.write(task.id, `[stderr] ${chunk}`);
         this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${chunk}` });
@@ -591,8 +600,11 @@ export class SyncManager {
 
     proc.on("close", async (code) => {
       flushBuffer();
-      this.activeProcesses.delete(task.id);
-      syncStore.updateTask(task.id, { pid: undefined });
+      // 仅当本进程仍是该任务的活跃进程时才清理，避免误删“停止后立刻重启”的新进程
+      if (this.activeProcesses.get(task.id) === proc) {
+        this.activeProcesses.delete(task.id);
+        syncStore.updateTask(task.id, { pid: undefined });
+      }
 
       // 任务被主动停止：不重试、不更新状态，直接结束本次同步
       if (this.stopRequested.has(task.id)) {
@@ -603,16 +615,14 @@ export class SyncManager {
       if (code !== 0 && needsRetry) {
         if (retryCount >= 3) {
           const msg = `[错误] 连续重试 ${retryCount} 次后仍然失败，已停止重试。请检查日志或手动处理。`;
-          logManager.write(task.id, msg);
-          this.win?.webContents.send("sync-log", { id: task.id, log: msg });
+          this.log(task.id, msg);
           this.updateStatus(task.id, "error");
           onDone(false);
           return;
         }
 
         const msg = `[自动重试] 检测到同步未完成，1 秒后自动重试... (重试次数: ${retryCount + 1}/3)`;
-        logManager.write(task.id, msg);
-        this.win?.webContents.send("sync-log", { id: task.id, log: msg });
+        this.log(task.id, msg);
 
         // 登记重试定时器（可被 stopTask 取消），并在重试真正完成后才解析本次同步，
         // 避免分批同步时出现“假成功”；重试被取消/跳过时 resolve(false) 让调用方中止剩余批次。
@@ -649,7 +659,7 @@ export class SyncManager {
             updateTaskData.sourceStats = sourceStats;
             updateTaskData.targetStats = targetStats;
             lastStatsUpdateTime.set(task.id, now);
-            if (hasChanges) logManager.write(task.id, "[优化] 检测到文件变动，已更新目录统计信息。");
+            if (hasChanges) this.log(task.id, "[优化] 检测到文件变动，已更新目录统计信息。");
           } catch (err) {
             console.error("更新统计信息失败:", err);
           }
@@ -664,7 +674,7 @@ export class SyncManager {
         this.win?.webContents.send("sync-status", { id: task.id, ...updateTaskData });
       }
 
-      logManager.write(task.id, `同步结束 (代码: ${code})${hasChanges ? " [有变动]" : " [无变动]"}`);
+      this.log(task.id, `同步结束 (代码: ${code})${hasChanges ? " [有变动]" : " [无变动]"}`);
       this.onStatusChange?.();
       onDone(true);
     });
@@ -674,7 +684,7 @@ export class SyncManager {
 
   private updateStatus(id: string, status: SyncTask["status"]) {
     syncStore.updateTask(id, { status });
-    logManager.write(id, `状态更新: ${status}`);
+    this.log(id, `状态更新: ${status}`);
     this.win?.webContents.send("sync-status", { id, status });
     this.onStatusChange?.();
   }

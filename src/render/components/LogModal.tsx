@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { X, Clock, Trash2, FolderOpen, ArrowDownToLine, ArrowDownFromLine } from "lucide-react";
 import { SyncTask } from "../types";
 import { cn } from "../utils";
@@ -42,17 +43,40 @@ export const LogModal: React.FC<LogModalProps> = ({
     };
   }, [taskId]);
 
-  // 当日志更新时自动滚动到底部
-  useEffect(() => {
-    if (autoScroll && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  // 将持久化日志与当前会话日志合并为统一的「行」数组，供虚拟列表渲染。
+  // 仅保留非空行；sessionLogs 的每个元素视为一个整体条目（内部换行由 pre-wrap 处理）。
+  const { lines, persistentLineCount } = useMemo(() => {
+    const result: string[] = [];
+    if (persistentLogs) {
+      for (const line of persistentLogs.split("\n")) {
+        if (line.length > 0) result.push(line);
+      }
     }
-  }, [persistentLogs, sessionLogs, autoScroll]);
+    const persistentLineCount = result.length;
+    result.push(...sessionLogs);
+    return { lines: result, persistentLineCount };
+  }, [persistentLogs, sessionLogs]);
+
+  const virtualizer = useVirtualizer({
+    count: lines.length,
+    getScrollElement: () => scrollRef.current,
+    // 单行（12px + leading-relaxed）约 24px；换行等实际高度由 measureElement 动态修正
+    estimateSize: () => 24,
+    overscan: 30,
+  });
+
+  // 新日志到达且处于自动滚动时，滚动到底部
+  useEffect(() => {
+    if (autoScroll && lines.length > 0) {
+      virtualizer.scrollToIndex(lines.length - 1, { align: "end" });
+    }
+  }, [lines.length, autoScroll, virtualizer]);
 
   // 监听滚动事件来判断用户是否手动向上滚动，如果是则暂停自动滚动
   const handleScroll = () => {
-    if (!scrollRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    const el = scrollRef.current;
+    if (!el) return;
+    const { scrollTop, scrollHeight, clientHeight } = el;
     // 如果距离底部超过 50px，则关闭自动滚动
     if (scrollHeight - scrollTop - clientHeight > 50) {
       if (autoScroll) setAutoScroll(false);
@@ -69,25 +93,11 @@ export const LogModal: React.FC<LogModalProps> = ({
     }
   };
 
-  const renderLogLine = (line: string, index: number | string) => {
-    const isError = 
-      (line.toLowerCase().includes("error") && !line.toLowerCase().includes("0 error")) ||
-      line.toLowerCase().includes("fatal") ||
-      (line.toLowerCase().includes("failed") && !line.toLowerCase().includes("0 failed")) ||
-      line.includes("错误:");
-
-    return (
-      <div
-        key={index}
-        className={cn(
-          "mb-1 whitespace-pre-wrap break-all text-emerald-400/90",
-          isError && "text-red-400"
-        )}
-      >
-        {line}
-      </div>
-    );
-  };
+  const isErrorLine = (line: string) =>
+    (line.toLowerCase().includes("error") && !line.toLowerCase().includes("0 error")) ||
+    line.toLowerCase().includes("fatal") ||
+    (line.toLowerCase().includes("failed") && !line.toLowerCase().includes("0 failed")) ||
+    line.includes("错误:");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -141,20 +151,47 @@ export const LogModal: React.FC<LogModalProps> = ({
           <div
             ref={scrollRef}
             onScroll={handleScroll}
-            className="flex-1 overflow-auto p-4 bg-slate-950 font-mono text-[12px] leading-relaxed scroll-smooth relative"
+            className="flex-1 overflow-auto p-4 bg-slate-950 font-mono text-[12px] leading-relaxed relative"
           >
-            {/* 历史持久化日志 */}
-            {persistentLogs && (
-              <div className="opacity-80">
-                {persistentLogs.split('\n').map((line, i) => line && renderLogLine(line, `p-${i}`))}
-              </div>
-            )}
-
-            {/* 当前会话日志 */}
-            {sessionLogs.map((log, i) => renderLogLine(log, `s-${i}`))}
-
-            {!persistentLogs && sessionLogs.length === 0 && (
+            {lines.length === 0 ? (
               <div className="text-slate-500 italic">暂无同步日志...</div>
+            ) : (
+              <div
+                style={{
+                  height: virtualizer.getTotalSize(),
+                  position: "relative",
+                  width: "100%",
+                }}
+              >
+                {virtualizer.getVirtualItems().map((item) => {
+                  const line = lines[item.index];
+                  const isError = isErrorLine(line);
+                  return (
+                    <div
+                      key={item.key}
+                      data-index={item.index}
+                      ref={virtualizer.measureElement}
+                      className={cn(
+                        "whitespace-pre-wrap break-all pb-1 text-left text-emerald-400/90",
+                        isError && "text-red-400",
+                        item.index < persistentLineCount && "opacity-80",
+                      )}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        width: "100%",
+                        minWidth: "100%",
+                        boxSizing: "border-box",
+                        transform: `translateY(${item.start}px)`,
+                      }}
+                    >
+                      {line}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
