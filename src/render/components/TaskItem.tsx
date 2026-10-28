@@ -164,7 +164,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 <span className="truncate max-w-[200px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100 text-slate-700 font-bold">
                   {task.sourcePath.split("/").filter(Boolean).pop() || "/"}
                 </span>
-                <Tooltip content="在访达中定位源目录" side="bottom">
+                <Tooltip content="定位到源目录" side="bottom">
                   <button
                     onClick={() => handleReveal("source")}
                     className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
@@ -221,7 +221,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 <span className="truncate max-w-[200px] font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-100 text-slate-700 font-bold">
                   {task.targetPath.split("/").filter(Boolean).pop() || "/"}
                 </span>
-                <Tooltip content="在访达中定位目标目录" side="bottom">
+                <Tooltip content="定位到目标目录" side="bottom">
                   <button
                     onClick={() => handleReveal("target")}
                     className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"

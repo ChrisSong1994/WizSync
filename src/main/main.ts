@@ -521,8 +521,9 @@ ipcMain.handle(
 
     const basePath = side === "source" ? task.sourcePath : task.targetPath;
     // 越界校验，防止揭示同步根目录之外的文件；并修正为真实存在的名字
+    // 注意：空字符串合法，表示根目录本身（用于 reveal 根目录），因此只能用 null 判断失败
     const relPath = resolveExistingInRoot(basePath, filePath);
-    if (!relPath) return false;
+    if (relPath === null) return false;
     const fullPath = path.join(basePath, relPath);
 
     if (fs.existsSync(fullPath)) {
