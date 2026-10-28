@@ -1,0 +1,36 @@
+diff --git a/dist/index.js b/dist/index.js
+index bc5d554c7207862d4f5094259ead7da3794ba0ad..63e9d2b48fa04eeebbe2e12efcbb6a23281b80c0 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -125,7 +125,12 @@ function resolvePackageJson(root = process.cwd()) {
+ }
+ function treeKillSync(pid) {
+   if (process.platform === "win32") {
+-    cp.execSync(`taskkill /pid ${pid} /T /F`);
++    // 进程可能已经退出（例如应用正常关闭后 vite 再次清理），taskkill 会报“没有找到进程”，
++    // 这里忽略该错误并屏蔽输出，避免 dev 进程因此崩溃。
++    try {
++      cp.execSync(`taskkill /pid ${pid} /T /F`, { stdio: "ignore" });
++    } catch {
++    }
+   } else {
+     killTree(pidTree({ pid, ppid: process.pid }));
+   }
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 50ba407d2aa615d693dc0e41d0435e956872d0af..bb411e27e6313ad670999cad6910bc316586a31f 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -101,7 +101,12 @@ function resolvePackageJson(root = process.cwd()) {
+ }
+ function treeKillSync(pid) {
+   if (process.platform === "win32") {
+-    cp.execSync(`taskkill /pid ${pid} /T /F`);
++    // 进程可能已经退出（例如应用正常关闭后 vite 再次清理），taskkill 会报“没有找到进程”，
++    // 这里忽略该错误并屏蔽输出，避免 dev 进程因此崩溃。
++    try {
++      cp.execSync(`taskkill /pid ${pid} /T /F`, { stdio: "ignore" });
++    } catch {
++    }
+   } else {
+     killTree(pidTree({ pid, ppid: process.pid }));
+   }

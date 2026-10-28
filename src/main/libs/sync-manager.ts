@@ -509,17 +509,13 @@ export class SyncManager {
       onDone(false);
     });
 
-    let outputBuffer = "";
+    // stdout / stderr 均按行缓冲处理，便于过滤扫描噪声、只保留具体动作。
+    const stdoutLineBuffer = { current: "" };
+    const stderrLineBuffer = { current: "" };
+    let stdoutNoArchive = false; // 是否处于“无归档文件”警告块（首次同步的扫描提示）
     let needsRetry = false;
     let hasChanges = false; // 标记本次同步是否有文件变动
     const lastStatsUpdateTime = new Map<string, number>();
-
-    const flushBuffer = () => {
-      if (outputBuffer) {
-        this.log(task.id, outputBuffer);
-        outputBuffer = "";
-      }
-    };
 
     const checkStatus = (text: string) => {
       // "Destination updated during synchronization" 很多时候是我们手动操作文件后引擎的防冲突保护
@@ -555,51 +551,94 @@ export class SyncManager {
       }
     };
 
-    proc.stdout.on("data", (data) => {
-      const chunk: string = data.toString();
+    /**
+     * 判断一行 Unison 输出是否为扫描/进度噪声。
+     * 日志只显示具体动作（任务启动、文件对比、复制、删除、同步完成等），
+     * 扫描信息（Looking for changes、Nothing to do、无归档文件提示、百分比进度等）不记录。
+     */
+    const isScanNoise = (t: string) =>
+      /^Looking for changes/.test(t) ||
+      /^Waiting for changes from other replicas/.test(t) ||
+      /^Scanning/.test(t) ||
+      /^Nothing to do:/.test(t) ||
+      /Contacting server/.test(t) ||
+      /^Starting\.\.\./.test(t) ||
+      /^\d+%\s/.test(t);
 
-      // 过滤掉我们不希望显示的冗余警告
-      if (chunk.includes("Destination updated during synchronization") || chunk.includes("Synchronization incomplete")) {
-        // 静默处理这个日志，只走内部的 needsRetry 逻辑
-        checkStatus(chunk);
+    /** stderr 中属于正常动作/阶段的信息行（其余非噪声行按警告处理） */
+    const isStderrInfoLine = (t: string) =>
+      t.startsWith("[BGN]") ||
+      t.startsWith("[END]") ||
+      t.includes("Synchronization complete") ||
+      t === "Reconciling changes" ||
+      /^\d+ items? will be synced/.test(t) ||
+      /to be synced from /.test(t) ||
+      t === "Propagating updates" ||
+      t.includes("started propagating changes") ||
+      t.includes("finished propagating changes") ||
+      t === "Saving synchronizer state";
+
+    /** 过滤并写入一行 Unison 输出 */
+    const logUnisonLine = (stream: "stdout" | "stderr", rawLine: string) => {
+      const line = rawLine.replace(/\r$/, "");
+      const t = line.trim();
+      if (!t) return;
+
+      // 冲突重试类提示：只走内部重试逻辑（checkStatus 已在 chunk 层处理），不写入日志
+      if (line.includes("Destination updated during synchronization") || line.includes("Synchronization incomplete")) {
         return;
       }
 
-      outputBuffer += chunk;
+      // 无归档文件警告块（首次同步的扫描提示，仅 stdout 出现）：整块过滤
+      if (stream === "stdout") {
+        if (stdoutNoArchive) {
+          if (/^(file|new file|new dir|changed|deleted|moved)\b/.test(t) || /^(====>|<====)/.test(t) || /---->|<----/.test(t)) {
+            stdoutNoArchive = false;
+          } else {
+            return;
+          }
+        } else if (/^Warning: No archive files were found/.test(t)) {
+          stdoutNoArchive = true;
+          return;
+        }
+      }
+
+      if (isScanNoise(t)) return;
+
+      if (stream === "stderr" && !isStderrInfoLine(t)) {
+        this.log(task.id, `警告: ${line}`);
+      } else {
+        this.log(task.id, line);
+      }
+    };
+
+    /** 将数据按行拆分处理，末尾不完整的行留在缓冲中等待下一次数据 */
+    const drainLineBuffer = (stream: "stdout" | "stderr", buffer: { current: string }, chunk: string) => {
+      buffer.current += chunk;
+      // Unison 在 Windows 上正常行以 \r\n 结尾，进度行只用 \r 覆盖刷新
+      const parts = buffer.current.split(/\r\n|\r|\n/);
+      buffer.current = parts.pop() ?? "";
+      for (const part of parts) logUnisonLine(stream, part);
+    };
+
+    proc.stdout.on("data", (data) => {
+      const chunk: string = data.toString();
       checkStatus(chunk);
       // 即时落盘：实时把 unison 的同步日志写入磁盘并推送到 LogModal，
       // 避免长扫描期间日志长时间无输出，看起来像卡死。
-      flushBuffer();
+      drainLineBuffer("stdout", stdoutLineBuffer, chunk);
     });
 
     proc.stderr.on("data", (data) => {
       const chunk: string = data.toString();
-
-      // 同样在 stderr 中过滤
-      if (chunk.includes("Destination updated during synchronization") || chunk.includes("Synchronization incomplete")) {
-        checkStatus(chunk);
-        return;
-      }
-
       checkStatus(chunk);
-
-      // 把明确的正常进度行与警告区分开，避免用户把 [BGN]/[END] 复制进度当成报错。
-      const trimmed = chunk.trimStart();
-      const isProgress =
-        trimmed.startsWith("[BGN]") ||
-        trimmed.startsWith("[END]") ||
-        chunk.includes("Synchronization complete");
-
-      if (isProgress) {
-        this.log(task.id, chunk);
-      } else {
-        logManager.write(task.id, `[stderr] ${chunk}`);
-        this.win?.webContents.send("sync-log", { id: task.id, log: `警告: ${chunk}` });
-      }
+      drainLineBuffer("stderr", stderrLineBuffer, chunk);
     });
 
     proc.on("close", async (code) => {
-      flushBuffer();
+      // 冲刷残留在行缓冲中的最后一行（若有）
+      if (stdoutLineBuffer.current) logUnisonLine("stdout", stdoutLineBuffer.current);
+      if (stderrLineBuffer.current) logUnisonLine("stderr", stderrLineBuffer.current);
       // 仅当本进程仍是该任务的活跃进程时才清理，避免误删“停止后立刻重启”的新进程
       if (this.activeProcesses.get(task.id) === proc) {
         this.activeProcesses.delete(task.id);

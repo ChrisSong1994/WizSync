@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  vite-plugin-electron:
+    hash: gyfxaipecby5hb6hroodt65ctq
+    path: patches/vite-plugin-electron.patch
+
 importers:
 
   .:
@@ -62,7 +67,7 @@ importers:
         version: 7.3.6(@types/node@25.5.0)(jiti@1.21.7)
       vite-plugin-electron:
         specifier: ^0.28.4
-        version: 0.28.8(vite-plugin-electron-renderer@0.14.6)
+        version: 0.28.8(patch_hash=gyfxaipecby5hb6hroodt65ctq)(vite-plugin-electron-renderer@0.14.6)
       vite-plugin-electron-renderer:
         specifier: ^0.14.5
         version: 0.14.6
@@ -4267,7 +4272,7 @@ snapshots:
 
   vite-plugin-electron-renderer@0.14.6: {}
 
-  vite-plugin-electron@0.28.8(vite-plugin-electron-renderer@0.14.6):
+  vite-plugin-electron@0.28.8(patch_hash=gyfxaipecby5hb6hroodt65ctq)(vite-plugin-electron-renderer@0.14.6):
     optionalDependencies:
       vite-plugin-electron-renderer: 0.14.6
 

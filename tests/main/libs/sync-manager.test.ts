@@ -377,3 +377,62 @@ describe("SyncManager 调度逻辑", () => {
     await stopPromise;
   });
 });
+
+describe("SyncManager Unison 输出过滤", () => {
+  it("只记录具体动作，过滤扫描与进度噪声", async () => {
+    const { src, tgt } = makeDirs();
+    const task = makeTask("t-filter", { sourcePath: src, targetPath: tgt });
+
+    // runSpecificPathSync 返回的 Promise 在进程结束时才 resolve，便于收尾
+    const pending = manager.runSpecificPathSync(task, ["f1.txt"]);
+    const proc = mockedSpawn.mock.results[mockedSpawn.mock.results.length - 1].value as any;
+
+    proc.stdout.emit(
+      "data",
+      Buffer.from(
+        "Warning: No archive files were found for these roots, whose canonical names are:\r\n" +
+        "\t" + src + "\r\n\t" + tgt + "\r\n" +
+        "This can happen either\r\n" +
+        "file     ---->            f1.txt  \r\n" +
+        "a            : file\r\n" +
+        "b            : absent\r\n" +
+        "Starting...\r           \r 42%  0/1  (6 B of 6 B)  --:-- ETA\r"
+      )
+    );
+    proc.stderr.emit(
+      "data",
+      Buffer.from(
+        "Unison 2.54.0 (ocaml 4.14.3): Contacting server...\r\n" +
+        "Looking for changes\r\n" +
+        "Reconciling changes\r\n" +
+        "Nothing to do: replicas have not changed since last sync.\r\n" +
+        "2 items will be synced, 0 skipped\r\n" +
+        "[BGN] Copying f1.txt from " + src + " to " + tgt + "\r\n" +
+        "[END] Copying f1.txt\r\n" +
+        "Synchronization complete\r\n"
+      )
+    );
+
+    const writes = vi.mocked(logManager.write).mock.calls.map((c) => c[1] as string);
+    const all = writes.join("\n");
+
+    // 扫描 / 进度噪声不应写入日志
+    expect(all).not.toContain("Looking for changes");
+    expect(all).not.toContain("Nothing to do");
+    expect(all).not.toContain("No archive files");
+    expect(all).not.toContain("Contacting server");
+    expect(all).not.toContain("Starting...");
+    expect(all).not.toContain("42%");
+
+    // 具体动作应保留
+    expect(all).toContain("Reconciling changes");
+    expect(all).toContain("2 items will be synced, 0 skipped");
+    expect(all).toContain("file     ---->            f1.txt");
+    expect(all).toContain("[BGN] Copying f1.txt");
+    expect(all).toContain("[END] Copying f1.txt");
+    expect(all).toContain("Synchronization complete");
+
+    proc.emit("close", 0);
+    await pending;
+  });
+});

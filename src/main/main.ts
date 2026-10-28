@@ -169,6 +169,8 @@ app.on("before-quit", async (e) => {
   
   console.log("正在执行退出前清理...");
   await syncManager.stopAllTasks();
+  // Windows 兜底：确保所有残留 Unison 进程都被终止
+  killAllUnisonWindows();
   
   // 清理完成后再次触发退出
   app.quit();
@@ -279,13 +281,31 @@ function getRetentionMs(task: SyncTask): number {
 }
 
 /**
+ * 强制结束本机所有 Unison 进程（Windows）。
+ * taskkill /IM unison.exe 会按进程名匹配；应用启动时尚未派生任何同步进程，
+ * 退出时又已完成 stopAllTasks，因此这里命中的都是残留/孤儿进程。
+ * 没有匹配进程时 taskkill 返回非零，属正常情况，静默忽略。
+ */
+function killAllUnisonWindows() {
+  if (process.platform !== "win32") return;
+  try {
+    execSync("taskkill /F /IM unison.exe /T", { stdio: "ignore" });
+  } catch {
+    // 忽略“没有找到进程”等错误
+  }
+}
+
+/**
  * 清理上次异常退出残留的 Unison 孤儿进程。
- * 通过匹配进程环境变量 UNISON=<userData>/task-data/<taskId>/unison 识别（由 sync-manager 注入）。
- * 仅在应用启动时（尚未派生任何同步进程）调用，因此命中的必然不是本实例的子进程。
+ * Windows 按进程名清理；POSIX 通过匹配进程环境变量 UNISON=<userData>/task-data/<taskId>/unison
+ * 识别（由 sync-manager 注入）。仅在应用启动时（尚未派生任何同步进程）调用，
+ * 因此命中的必然不是本实例的子进程。
  */
 function cleanupOrphanedUnison() {
-  // 依赖 ps 扫描进程环境变量，目前仅支持 POSIX 系统
-  if (process.platform === "win32") return;
+  if (process.platform === "win32") {
+    killAllUnisonWindows();
+    return;
+  }
   const marker = path.join(app.getPath("userData"), "task-data");
   try {
     const out = execSync("ps eww -axo pid=,command=", {
