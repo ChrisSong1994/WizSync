@@ -1,0 +1,10 @@
+# 单包项目：声明根目录为工作区包，并配置 pnpm 10+/11 的构建脚本白名单。
+# 注意：不能省略 packages 字段，否则 pnpm 9 会报 "packages field missing or empty"。
+packages:
+  - .
+
+# pnpm 10.16+ / 11 用 allowBuilds（map）放行依赖的 postinstall 脚本；
+# electron / esbuild 需要跑脚本下载二进制。pnpm 9 不识别该字段，会安全忽略。
+allowBuilds:
+  electron: true
+  esbuild: true
