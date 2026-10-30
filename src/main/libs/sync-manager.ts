@@ -513,6 +513,7 @@ export class SyncManager {
     const stdoutLineBuffer = { current: "" };
     const stderrLineBuffer = { current: "" };
     let stdoutNoArchive = false; // 是否处于“无归档文件”警告块（首次同步的扫描提示）
+    let scanProgressAnnounced = false; // 扫描阶段是否已提示“文件扫描中”（进度逐文件刷新，只提示一次）
     let needsRetry = false;
     let hasChanges = false; // 标记本次同步是否有文件变动
     const lastStatsUpdateTime = new Map<string, number>();
@@ -560,6 +561,7 @@ export class SyncManager {
       /^Looking for changes/.test(t) ||
       /^Waiting for changes from other replicas/.test(t) ||
       /^Scanning/.test(t) ||
+      /^[|/\\-]\s+\S/.test(t) || // 扫描进度：旋转光标 + 路径（按行到达时兜底过滤）
       /^Nothing to do:/.test(t) ||
       /Contacting server/.test(t) ||
       /^Starting\.\.\./.test(t) ||
@@ -612,18 +614,44 @@ export class SyncManager {
       }
     };
 
+    /** 检测到扫描进度时只提示一次“文件扫描中”，避免逐文件路径刷屏 */
+    const announceScanProgress = (raw: string) => {
+      if (scanProgressAnnounced) return;
+      // 扫描进度段形如 "/ path"、"- path"、"| path"、"\ path"（旋转光标 + 路径），
+      // 复制进度段是 " 42% ..." 百分比，不属于扫描提示
+      if (/(?:^|\r)[|/\\-]\s+\S/.test(raw)) {
+        scanProgressAnnounced = true;
+        this.log(task.id, "文件扫描中...");
+      }
+    };
+
+    /**
+     * 剥离 Unison 的裸 \r 进度刷新段（原地覆盖输出），只返回该行最后的真实内容。
+     * 扫描/复制进度均用裸 \r 刷新：扫描段是“旋转光标 + 路径”，复制段是百分比。
+     */
+    const stripProgress = (raw: string): string => {
+      const segments = raw.split(/\r/);
+      if (segments.length > 1) announceScanProgress(raw);
+      return segments[segments.length - 1];
+    };
+
     /** 将数据按行拆分处理，末尾不完整的行留在缓冲中等待下一次数据 */
     const drainLineBuffer = (stream: "stdout" | "stderr", buffer: { current: string }, chunk: string) => {
       buffer.current += chunk;
-      // Unison 在 Windows 上正常行以 \r\n 结尾，进度行只用 \r 覆盖刷新
-      const parts = buffer.current.split(/\r\n|\r|\n/);
+      // 真实行以 \r\n 或 \n 结尾；Unison 的扫描/复制进度用裸 \r 原地刷新，不作为行结束
+      const parts = buffer.current.split(/\r\n|\n/);
       buffer.current = parts.pop() ?? "";
-      for (const part of parts) logUnisonLine(stream, part);
+      for (const part of parts) {
+        const real = stripProgress(part);
+        if (real.trim()) logUnisonLine(stream, real);
+      }
     };
 
     proc.stdout.on("data", (data) => {
       const chunk: string = data.toString();
       checkStatus(chunk);
+      // 扫描进度用裸 \r 原地刷新、不会触发按行 flush，这里实时检测并提示一次“文件扫描中”
+      announceScanProgress(chunk);
       // 即时落盘：实时把 unison 的同步日志写入磁盘并推送到 LogModal，
       // 避免长扫描期间日志长时间无输出，看起来像卡死。
       drainLineBuffer("stdout", stdoutLineBuffer, chunk);
@@ -636,9 +664,15 @@ export class SyncManager {
     });
 
     proc.on("close", async (code) => {
-      // 冲刷残留在行缓冲中的最后一行（若有）
-      if (stdoutLineBuffer.current) logUnisonLine("stdout", stdoutLineBuffer.current);
-      if (stderrLineBuffer.current) logUnisonLine("stderr", stderrLineBuffer.current);
+      // 冲刷残留在行缓冲中的最后一行（若有）；同样先剥离裸 \r 进度刷新段
+      if (stdoutLineBuffer.current) {
+        const real = stripProgress(stdoutLineBuffer.current);
+        if (real.trim()) logUnisonLine("stdout", real);
+      }
+      if (stderrLineBuffer.current) {
+        const real = stripProgress(stderrLineBuffer.current);
+        if (real.trim()) logUnisonLine("stderr", real);
+      }
       // 仅当本进程仍是该任务的活跃进程时才清理，避免误删“停止后立刻重启”的新进程
       if (this.activeProcesses.get(task.id) === proc) {
         this.activeProcesses.delete(task.id);

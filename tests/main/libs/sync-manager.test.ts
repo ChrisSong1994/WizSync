@@ -435,4 +435,45 @@ describe("SyncManager Unison 输出过滤", () => {
     proc.emit("close", 0);
     await pending;
   });
+
+  it("扫描阶段的逐文件进度只提示一次“文件扫描中”，路径不写入日志", async () => {
+    const { src, tgt } = makeDirs();
+    const task = makeTask("t-scan", { sourcePath: src, targetPath: tgt });
+
+    const pending = manager.runSpecificPathSync(task, ["a/b.txt"]);
+    const proc = mockedSpawn.mock.results[mockedSpawn.mock.results.length - 1].value as any;
+
+    // 扫描进度用裸 \r 原地刷新，后接第一个真实动作行
+    proc.stdout.emit(
+      "data",
+      Buffer.from(
+        "/ a/b.txt\r                    \r- c/d.txt\r                    \rfile     ---->            f1.txt  \r\n"
+      )
+    );
+    // 再来一段扫描进度 + 真实行，确认“文件扫描中”不会重复提示
+    proc.stdout.emit(
+      "data",
+      Buffer.from("/ x/y.txt\r                    \rnew file ---->            f2.txt  \r\n")
+    );
+    proc.stderr.emit(
+      "data",
+      Buffer.from("Reconciling changes\r\nSynchronization complete\r\n")
+    );
+
+    const writes = vi.mocked(logManager.write).mock.calls.map((c) => c[1] as string);
+    const all = writes.join("\n");
+
+    // 只断言“旋转光标 + 路径”的扫描进度行未被记录，避免误伤命令日志中的 -path 参数
+    expect(all).not.toContain("/ a/b.txt");
+    expect(all).not.toContain("- c/d.txt");
+    expect(all).not.toContain("/ x/y.txt");
+    expect(writes.filter((w) => w === "文件扫描中...")).toHaveLength(1);
+    expect(all).toContain("file     ---->            f1.txt");
+    expect(all).toContain("new file ---->            f2.txt");
+    expect(all).toContain("Reconciling changes");
+    expect(all).toContain("Synchronization complete");
+
+    proc.emit("close", 0);
+    await pending;
+  });
 });
