@@ -21,6 +21,9 @@ export interface SyncTask {
   pid?: number; // 当前 Unison 进程 ID
   skippedCount?: number; // 最近一次同步被跳过的文件数（退出码 1 时 > 0）
   skippedFiles?: { path: string; reason: string }[]; // 被跳过的文件与原因，供卡片展示细节
+  // Unison 判定的冲突（两边都改过、无法自动收敛）：content = 内容冲突，props = 属性/时间戳冲突。
+  // 这是“对比差异”里能查出未同步文件的权威来源（本地扫描无法可靠推断属性冲突）。
+  conflicts?: { path: string; kind: "content" | "props" | "other" }[];
 }
 
 /** 目录对比结果，与渲染进程 types.d.ts 中的 DiffResult 保持一致 */

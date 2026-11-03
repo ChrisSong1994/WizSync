@@ -15,6 +15,7 @@ import {
   EyeOff,
   Eye,
   ChevronsRight,
+  AlertTriangle,
 } from "lucide-react";
 import { SyncTask, DiffResult } from "../types";
 import { formatSize, cn } from "../utils";
@@ -81,6 +82,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({
       return next;
     });
     if (success) {
+      // 该文件已按所选方向强制覆盖，冲突已在主进程侧解除，从列表中移除
       setResolvedPaths(prev => new Set(prev).add(filePath));
     }
   };
@@ -169,7 +171,11 @@ export const DiffModal: React.FC<DiffModalProps> = ({
   const activeDifferent = diffData?.different.filter(f => !resolvedPaths.has(f.path)) || [];
   const activeSourceOnly = diffData?.sourceOnly.filter(f => !resolvedPaths.has(f.path)) || [];
   const activeTargetOnly = diffData?.targetOnly.filter(f => !resolvedPaths.has(f.path)) || [];
-  const totalActiveDiffs = activeDifferent.length + activeSourceOnly.length + activeTargetOnly.length;
+  // Unison 判定的冲突：两边都改过、不会自动覆盖（本地扫描只看 size/mtime，查不出属性冲突）
+  const activeConflicts = (tasks.find(t => t.id === taskId)?.conflicts || [])
+    .filter(c => !resolvedPaths.has(c.path));
+  const totalActiveDiffs =
+    activeDifferent.length + activeSourceOnly.length + activeTargetOnly.length + activeConflicts.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -234,6 +240,112 @@ export const DiffModal: React.FC<DiffModalProps> = ({
                       <h3 className="text-md font-bold text-slate-800">所有非忽略文件已同步</h3>
                       <p className="text-xs text-slate-500 mt-1">共有 {diffData.ignored.length} 个路径被规则忽略</p>
                     </div>
+                  )}
+
+                  {/* 两边都改过（Unison 冲突）：不会自动同步，必须人工选边 */}
+                  {activeConflicts.length > 0 && (
+                    <section>
+                      <div className="flex items-center justify-between mb-3">
+                        <button
+                          onClick={() => toggleSection('conflicts')}
+                          className="flex items-center gap-2 group"
+                        >
+                          <h3 className="text-sm font-bold text-red-600 flex items-center gap-2">
+                            <AlertTriangle size={16} />
+                            两边都改过未同步 ({activeConflicts.length})
+                          </h3>
+                          <span className="text-slate-400 group-hover:text-red-500 transition-colors">
+                            {collapsedSections.has('conflicts') ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+                          </span>
+                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleSyncAll(activeConflicts, 'targetToSource', 'conflictsTarget')}
+                            disabled={batchSyncing.has('conflictsSource') || batchSyncing.has('conflictsTarget')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('conflictsTarget') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <ChevronsRight size={12} className="rotate-180" />
+                            )}
+                            全部使用目标端版本
+                          </button>
+                          <button
+                            onClick={() => handleSyncAll(activeConflicts, 'sourceToTarget', 'conflictsSource')}
+                            disabled={batchSyncing.has('conflictsSource') || batchSyncing.has('conflictsTarget')}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          >
+                            {batchSyncing.has('conflictsSource') ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <ChevronsRight size={12} />
+                            )}
+                            全部使用源端版本
+                          </button>
+                        </div>
+                      </div>
+                      {!collapsedSections.has('conflicts') && (
+                        <div className="space-y-2 animate-in slide-in-from-top-1 duration-200">
+                          <p className="text-[11px] text-slate-500">
+                            这些文件在源端和目标端都被修改过，Unison 出于安全考虑不会自动覆盖；请选择保留哪一版（选择后会强制覆盖另一端，包含属性/时间戳）。
+                          </p>
+                          {activeConflicts.slice(0, MAX_DISPLAY).map((file, i) => (
+                            <div key={i} className="bg-red-50/40 border border-red-100 rounded-xl p-3 flex items-center justify-between group hover:border-red-300 transition-colors">
+                              <div className="min-w-0 mr-4">
+                                <div className="text-sm font-mono text-slate-700 truncate" title={file.path}>
+                                  {file.path}
+                                </div>
+                                <div className="text-[10px] text-red-500 mt-0.5">
+                                  {file.kind === 'content'
+                                    ? '内容两边不同'
+                                    : file.kind === 'props'
+                                      ? '属性/时间戳两边不同（内容一致）'
+                                      : '两边都改过'}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-100">
+                                  <button
+                                    onClick={() => handleReveal(file.path, 'source')}
+                                    className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600 transition-all"
+                                    title="在源端定位文件"
+                                  >
+                                    <MapPin size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleSyncFile(file.path, 'sourceToTarget')}
+                                    disabled={syncingPaths.has(`${file.path}-sourceToTarget`)}
+                                    className="px-2 py-1 hover:bg-blue-50 rounded-lg text-blue-600 text-[10px] font-bold disabled:opacity-50"
+                                  >
+                                    使用源端版本
+                                  </button>
+                                </div>
+
+                                <ArrowRight size={14} className="text-slate-300 mx-1" />
+
+                                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-100">
+                                  <button
+                                    onClick={() => handleSyncFile(file.path, 'targetToSource')}
+                                    disabled={syncingPaths.has(`${file.path}-targetToSource`)}
+                                    className="px-2 py-1 hover:bg-emerald-50 rounded-lg text-emerald-600 text-[10px] font-bold disabled:opacity-50"
+                                  >
+                                    使用目标端版本
+                                  </button>
+                                  <button
+                                    onClick={() => handleReveal(file.path, 'target')}
+                                    className="p-1.5 hover:bg-emerald-50 rounded-lg text-slate-400 hover:text-emerald-600 transition-all"
+                                    title="在目标端定位文件"
+                                  >
+                                    <MapPin size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
                   )}
 
                   {/* 内容不一致 */}

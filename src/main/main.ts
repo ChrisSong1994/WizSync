@@ -168,6 +168,9 @@ app.on("before-quit", async (e) => {
   isQuitting = true;
   
   console.log("正在执行退出前清理...");
+  // 先停掉磁盘监控定时器：窗口随后会被销毁，定时器若继续运行会触发
+  // "TypeError: Object has been destroyed"
+  diskManager.stopMonitoring();
   await syncManager.stopAllTasks();
   // Windows 兜底：确保所有残留 Unison 进程都被终止
   killAllUnisonWindows();

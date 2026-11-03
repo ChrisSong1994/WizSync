@@ -139,13 +139,25 @@ export class SyncManager {
   }
 
   /**
+   * 安全推送消息到渲染进程：窗口销毁后访问 webContents 会抛
+   * "TypeError: Object has been destroyed"（退出流程中尤其容易出现）。
+   */
+  private sendToRenderer(channel: string, payload: unknown) {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    const webContents = win.webContents;
+    if (!webContents || webContents.isDestroyed()) return;
+    webContents.send(channel, payload);
+  }
+
+  /**
    * 写入持久化日志，并同时推送到渲染进程（LogModal 实时展示）。
    * 之前生命周期日志（任务启动 / 状态更新 / PID / 同步结束等）只落盘、未 send，
    * 导致同步过程中 LogModal 只能靠打开时一次性加载持久化日志，收不到实时日志。
    */
   private log(id: string, content: string) {
     logManager.write(id, content);
-    this.win?.webContents.send("sync-log", { id, log: content });
+    this.sendToRenderer("sync-log", { id, log: content });
   }
 
   public getLogs(id: string): string {
@@ -518,6 +530,9 @@ export class SyncManager {
     let needsRetry = false;
     let hasChanges = false; // 标记本次同步是否有文件变动
     const skippedFiles: { path: string; reason: string }[] = []; // 被 Unison 跳过的文件与原因（退出码 1 的来源）
+    // Unison 判定的冲突（两边都改过、无法自动收敛）。这是"对比差异"里能查出未同步文件的权威来源：
+    // 本地扫描只看 size/mtime，无法可靠推断属性冲突（实测 415 个文件里有 162 个 mtime 落在噪声区间）。
+    const conflicts: { path: string; kind: "content" | "props" | "other" }[] = [];
     const lastStatsUpdateTime = new Map<string, number>();
 
     const checkStatus = (text: string) => {
@@ -591,6 +606,29 @@ export class SyncManager {
       // 冲突重试类提示：只走内部重试逻辑（checkStatus 已在 chunk 层处理），不写入日志
       if (line.includes("Destination updated during synchronization") || line.includes("Synchronization incomplete")) {
         return;
+      }
+
+      // 冲突行形如 "props    <-?-> props      路径"、"changed  <-?-> changed  路径"，
+      // 首轮（无 archive）则是 "new file <-?-> new file  路径" —— 状态文本可能含空格，
+      // 所以按 <-?-> 拆开后取最后一段作为路径（与之前的列间隔 2 个以上空格）。
+      // 必须在所有噪声过滤（尤其 stdoutNoArchive 块）之前捕获，否则首轮同步会漏掉。
+      if (t.includes("<-?->")) {
+        const halves = t.split("<-?->");
+        if (halves.length === 2) {
+          const left = halves[0].trim();
+          const rest = /^\s*(.*?)\s{2,}(.+?)\s*$/.exec(halves[1]);
+          if (rest) {
+            const status = `${left} ${rest[1]}`;
+            const conflictPath = rest[2];
+            const kind: "content" | "props" | "other" =
+              status.includes("props")
+                ? "props"
+                : status.includes("changed") || status.includes("new file")
+                  ? "content"
+                  : "other";
+            conflicts.push({ path: conflictPath, kind });
+          }
+        }
       }
 
       // 无归档文件警告块（首次同步的扫描提示，仅 stdout 出现）：整块过滤
@@ -756,7 +794,7 @@ export class SyncManager {
         updateTaskData.targetDisk = targetDisk;
 
         syncStore.updateTask(task.id, updateTaskData);
-        this.win?.webContents.send("sync-status", { id: task.id, ...updateTaskData });
+        this.sendToRenderer("sync-status", { id: task.id, ...updateTaskData });
       }
 
       this.log(task.id, `同步结束 (代码: ${code})${hasChanges ? " [有变动]" : " [无变动]"}`);
@@ -783,10 +821,47 @@ export class SyncManager {
         this.log(task.id, `[错误] Unison 退出码 ${code}${hint}，请检查上方日志或手动处理。`);
       }
 
-      // 跳过明细随状态一起下发：卡片上的“N 个文件被跳过”可点开查看具体文件与原因
+      // 局部同步（单文件 / 批量 -path）只覆盖本次涉及的路径，其余冲突必须保留：
+      // 否则在对比页修好一个文件，整张冲突表就被清空了。
+      const pathKey = (p: string) => toUnisonPath(p).replace(/^\.?\/+/, "");
+      const scope = (specificPaths ?? []).map(pathKey);
+      const inScope = (p: string) => {
+        const key = pathKey(p);
+        return scope.some((s) => key === s || key.startsWith(`${s}/`));
+      };
+      const previousConflicts =
+        syncStore.getTasks().find((t) => t.id === task.id)?.conflicts ?? [];
+      const carriedConflicts =
+        scope.length > 0 ? previousConflicts.filter((c) => !inScope(c.path)) : [];
+      const mergedConflicts = [
+        ...carriedConflicts.filter(
+          (c) => !conflicts.some((n) => pathKey(n.path) === pathKey(c.path)),
+        ),
+        ...conflicts,
+      ];
+
+      // 冲突必须显式提示：这类文件"两边都被改过"，不会被自动同步，需要用户在对比页选择保留哪一版
+      if (mergedConflicts.length > 0) {
+        const contentCount = mergedConflicts.filter((c) => c.kind === "content").length;
+        const propsCount = mergedConflicts.filter((c) => c.kind === "props").length;
+        const detail = [
+          contentCount ? `${contentCount} 个内容冲突` : "",
+          propsCount ? `${propsCount} 个属性/时间戳冲突` : "",
+        ].filter(Boolean).join("、");
+        this.log(
+          task.id,
+          `[冲突] ${mergedConflicts.length} 个文件两边都被修改且无法自动收敛（${detail}），未同步。请在"对比差异"中选择保留哪一版。`,
+        );
+        conflicts.forEach((c) =>
+          this.log(task.id, `[冲突] ${c.kind === "props" ? "属性不同" : c.kind === "content" ? "内容不同" : "冲突"}: ${c.path}`),
+        );
+      }
+
+      // 跳过明细与冲突随状态一起下发：卡片可点开查看，对比页的"两边都改过"区块也依赖它
       this.updateStatus(task.id, status, {
         skippedCount: skippedFiles.length,
         skippedFiles,
+        conflicts: mergedConflicts,
       });
       onDone(true);
     });
@@ -801,7 +876,7 @@ export class SyncManager {
   ) {
     syncStore.updateTask(id, { status, ...extra });
     this.log(id, `状态更新: ${status}`);
-    this.win?.webContents.send("sync-status", { id, status, ...extra });
+    this.sendToRenderer("sync-status", { id, status, ...extra });
     this.onStatusChange?.();
   }
 }

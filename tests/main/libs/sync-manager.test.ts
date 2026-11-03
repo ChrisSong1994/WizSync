@@ -567,3 +567,81 @@ describe("SyncManager 退出码语义", () => {
     expect(syncStore.getTasks().find((t) => t.id === "t-code3")?.status).toBe("error");
   });
 });
+
+describe("SyncManager 冲突识别", () => {
+  function loggedText(): string {
+    return vi
+      .mocked(logManager.write)
+      .mock.calls.map((c) => c[1] as string)
+      .join("\n");
+  }
+
+  it("捕获 props/content 冲突行并随状态下发，供对比页展示", async () => {
+    const { src, tgt } = makeDirs();
+    const task = makeTask("t-conflict", { sourcePath: src, targetPath: tgt });
+    syncStore.saveTask(task);
+
+    const pending = manager.runSpecificPathSync(task, ["a.png", "b.txt"]);
+    const proc = mockedSpawn.mock.results[mockedSpawn.mock.results.length - 1].value as any;
+
+    proc.stdout.emit(
+      "data",
+      Buffer.from(
+        "props    <-?-> props      a.png  \r\n" +
+        "changed  <-?-> changed    b.txt  \r\n" +
+        "new file <-?-> new file   c.txt  \r\n"
+      )
+    );
+    proc.stderr.emit(
+      "data",
+      Buffer.from(
+        "Reconciling changes\r\n" +
+        "0 items will be synced, 3 skipped\r\n" +
+        "Synchronization complete\r\n" +
+        "  skipped: a.png (properties changed on both sides)\r\n" +
+        "  skipped: b.txt (contents changed on both sides)\r\n" +
+        "  skipped: c.txt (contents changed on both sides)\r\n"
+      )
+    );
+
+    proc.emit("close", 1);
+    await pending;
+
+    const all = loggedText();
+    expect(all).toContain("[冲突] 3 个文件两边都被修改且无法自动收敛");
+    expect(all).toContain("[冲突] 属性不同: a.png");
+    expect(all).toContain("[冲突] 内容不同: b.txt");
+    // 首轮同步（无 archive）输出的是 "new file <-?-> new file"，状态文本含空格也必须解析正确
+    expect(all).toContain("[冲突] 内容不同: c.txt");
+
+    const saved = syncStore.getTasks().find((t) => t.id === "t-conflict");
+    expect(saved?.conflicts).toEqual([
+      { path: "a.png", kind: "props" },
+      { path: "b.txt", kind: "content" },
+      { path: "c.txt", kind: "content" },
+    ]);
+  });
+
+  it("局部同步只清理本次路径的冲突，其余冲突保留", async () => {
+    const { src, tgt } = makeDirs();
+    const task = makeTask("t-conflict-scope", {
+      sourcePath: src,
+      targetPath: tgt,
+      conflicts: [
+        { path: "keep.png", kind: "props" },
+        { path: "fixed.png", kind: "content" },
+      ],
+    });
+    syncStore.saveTask(task);
+
+    const pending = manager.runSpecificPathSync(task, ["fixed.png"]);
+    const proc = mockedSpawn.mock.results[mockedSpawn.mock.results.length - 1].value as any;
+
+    proc.stderr.emit("data", Buffer.from("Reconciling changes\r\nSynchronization complete\r\n"));
+    proc.emit("close", 0);
+    await pending;
+
+    const saved = syncStore.getTasks().find((t) => t.id === "t-conflict-scope");
+    expect(saved?.conflicts).toEqual([{ path: "keep.png", kind: "props" }]);
+  });
+});

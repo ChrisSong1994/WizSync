@@ -63,8 +63,26 @@ export class DiskManager {
     
     // 然后每 10 秒刷新一次
     this.diskSpaceTimer = setInterval(() => {
-      this.checkAllDisks();
+      try {
+        this.checkAllDisks();
+      } catch (err) {
+        // 退出流程中窗口可能已销毁，任何异常都不该冒泡成 Uncaught Exception 弹窗
+        console.error("[DiskManager] 磁盘检测失败:", err);
+      }
     }, 10000);
+  }
+
+  /**
+   * 安全推送消息到渲染进程。
+   * 窗口关闭（native 对象已销毁）后 webContents 访问会抛
+   * "TypeError: Object has been destroyed"，必须先做双重销毁检查。
+   */
+  private sendToRenderer(channel: string, payload: unknown) {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    const webContents = win.webContents;
+    if (!webContents || webContents.isDestroyed()) return;
+    webContents.send(channel, payload);
   }
 
   /**
@@ -82,9 +100,11 @@ export class DiskManager {
       const wasOffline = !task.sourceDisk || !task.targetDisk;
       const isOnline = !!sourceDisk && !!targetDisk;
 
-      if (wasOffline && isOnline && this.onDiskReconnect) {
-        // 使用 setImmediate 确保不阻塞监控主循环
-        setImmediate(() => this.onDiskReconnect!(task.id));
+      const reconnectCb = this.onDiskReconnect;
+      if (wasOffline && isOnline && reconnectCb) {
+        // 使用 setImmediate 确保不阻塞监控主循环；回调先捕获引用，
+        // 避免延后执行时 stopMonitoring() 已把 onDiskReconnect 置空
+        setImmediate(() => reconnectCb(task.id));
       }
 
       // 显式对比关键数值（增加名称对比）
@@ -105,7 +125,7 @@ export class DiskManager {
         };
         syncStore.updateTask(task.id, updates);
         
-        this.win?.webContents.send("sync-status", { 
+        this.sendToRenderer("sync-status", { 
           id: task.id, 
           status: task.status,
           ...updates
@@ -127,6 +147,8 @@ export class DiskManager {
       clearInterval(this.diskSpaceTimer);
       this.diskSpaceTimer = null;
     }
+    this.win = null;
+    this.onDiskReconnect = null;
   }
 }
 

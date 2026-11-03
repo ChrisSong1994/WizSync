@@ -20,6 +20,7 @@ export interface SyncTask {
   pid?: number
   skippedCount?: number
   skippedFiles?: { path: string; reason: string }[]
+  conflicts?: { path: string; kind: 'content' | 'props' | 'other' }[]
 }
 
 export interface BackupFile {
@@ -72,7 +73,7 @@ export interface ElectronAPI {
   ignorePaths: (taskId: string, filePaths: string[]) => Promise<boolean>
   unignorePath: (taskId: string, filePath: string) => Promise<boolean>
   revealInFileExplorer: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
-  onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; skippedCount?: number; skippedFiles?: SyncTask['skippedFiles']; sourceStats?: any; targetStats?: any }) => void) => void
+  onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; skippedCount?: number; skippedFiles?: SyncTask['skippedFiles']; conflicts?: SyncTask['conflicts']; sourceStats?: any; targetStats?: any }) => void) => void
   onSyncLog: (callback: (data: { id: string; log: string }) => void) => void
   onCompareProgress: (callback: (data: { id: string; count: number }) => void) => void
 }

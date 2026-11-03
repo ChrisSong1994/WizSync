@@ -123,7 +123,7 @@ describe("DiskManager 磁盘重连检测", () => {
       })
     );
 
-    const win = { webContents: { send: vi.fn() } } as any;
+    const win = { isDestroyed: () => false, webContents: { isDestroyed: () => false, send: vi.fn() } } as any;
     const onStatusChange = vi.fn();
     const onReconnect = vi.fn();
 
@@ -146,9 +146,33 @@ describe("DiskManager 磁盘重连检测", () => {
     );
 
     const onReconnect = vi.fn();
-    diskManager.init({ webContents: { send: vi.fn() } } as any, vi.fn(), onReconnect);
+    diskManager.init(
+      { isDestroyed: () => false, webContents: { isDestroyed: () => false, send: vi.fn() } } as any,
+      vi.fn(),
+      onReconnect
+    );
     await new Promise((r) => setImmediate(r));
 
     expect(onReconnect).not.toHaveBeenCalled();
+  });
+});
+
+describe("DiskManager 窗口销毁保护", () => {
+  it("窗口已销毁时不再向渲染进程发送消息，也不抛 Object has been destroyed", () => {
+    vi.spyOn(fs, "existsSync").mockReturnValue(true);
+    vi.spyOn(fs, "statfsSync").mockReturnValue({
+      bsize: 4096,
+      blocks: 1000,
+      bfree: 500,
+    } as any);
+
+    // 没有任何磁盘信息 → 首轮检测必然进入"需要推送"的分支
+    syncStore.saveTask(makeTask("t3"));
+
+    const send = vi.fn();
+    const win = { isDestroyed: () => true, webContents: { isDestroyed: () => false, send } } as any;
+
+    expect(() => diskManager.init(win, vi.fn(), vi.fn())).not.toThrow();
+    expect(send).not.toHaveBeenCalled();
   });
 });
