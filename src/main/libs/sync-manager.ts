@@ -517,7 +517,7 @@ export class SyncManager {
     let scanProgressAnnounced = false; // 扫描阶段是否已提示“文件扫描中”（进度逐文件刷新，只提示一次）
     let needsRetry = false;
     let hasChanges = false; // 标记本次同步是否有文件变动
-    const skippedItems: string[] = []; // 被 Unison 跳过的文件（退出码 1 的来源）
+    const skippedFiles: { path: string; reason: string }[] = []; // 被 Unison 跳过的文件与原因（退出码 1 的来源）
     const lastStatsUpdateTime = new Map<string, number>();
 
     const checkStatus = (text: string) => {
@@ -614,7 +614,7 @@ export class SyncManager {
         // 这是 Unison 退出码 1 的唯一来源，close 阶段据此给出明确的日志说明，
         // 避免"卡片显示 error、日志里却看不到任何线索"。
         const skipped = /^\s*skipped:\s+(.+?)\s*\((.+)\)\s*$/.exec(t);
-        if (skipped) skippedItems.push(`${skipped[1]}（${skipped[2]}）`);
+        if (skipped) skippedFiles.push({ path: skipped[1], reason: skipped[2] });
         this.log(task.id, `警告: ${line}`);
       } else {
         this.log(task.id, line);
@@ -766,11 +766,13 @@ export class SyncManager {
       if (code === 1) {
         this.log(
           task.id,
-          skippedItems.length > 0
-            ? `[警告] Unison 退出码 1：${skippedItems.length} 个文件被跳过未同步（其余文件已同步完成），本次同步按正常结束处理。`
+          skippedFiles.length > 0
+            ? `[警告] Unison 退出码 1：${skippedFiles.length} 个文件被跳过未同步（其余文件已同步完成），本次同步按正常结束处理。`
             : "[警告] Unison 退出码 1：有文件被跳过未同步（其余文件已同步完成），本次同步按正常结束处理。",
         );
-        skippedItems.forEach((item) => this.log(task.id, `[警告] 未同步: ${item}`));
+        skippedFiles.forEach((f) =>
+          this.log(task.id, `[警告] 未同步: ${f.path}（${f.reason}）`),
+        );
       } else if (code !== 0) {
         const hint =
           code === 2
@@ -781,8 +783,10 @@ export class SyncManager {
         this.log(task.id, `[错误] Unison 退出码 ${code}${hint}，请检查上方日志或手动处理。`);
       }
 
+      // 跳过明细随状态一起下发：卡片上的“N 个文件被跳过”可点开查看具体文件与原因
       this.updateStatus(task.id, status, {
-        skippedCount: code === 1 ? skippedItems.length : 0,
+        skippedCount: skippedFiles.length,
+        skippedFiles,
       });
       onDone(true);
     });

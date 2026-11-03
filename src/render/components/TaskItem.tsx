@@ -16,6 +16,7 @@ import {
   Archive,
   RotateCcw,
   MoreVertical,
+  ChevronDown,
 } from "lucide-react";
 import { SyncTask } from "../types";
 import { cn, formatSize } from "../utils";
@@ -44,14 +45,20 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   const [deleting, setDeleting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  // 被跳过文件的详情浮层（点击底部警告文案展开）
+  const [showSkipped, setShowSkipped] = useState(false);
   // 前端确认弹窗：'delete' | 'reset'，null 表示未打开
   const [confirmAction, setConfirmAction] = useState<"delete" | "reset" | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const skippedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setShowMenu(false);
+      }
+      if (skippedRef.current && !skippedRef.current.contains(event.target as Node)) {
+        setShowSkipped(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -370,18 +377,64 @@ export const TaskItem: React.FC<TaskItemProps> = ({
       {/* 最近同步信息 */}
       {task.lastSyncTime && (
         <div className="px-5 py-2 bg-slate-50 border-t border-slate-100 rounded-b-2xl flex items-center justify-between">
-          <span className="text-[12px] text-slate-500 flex items-center gap-1">
+          <div className="text-[12px] text-slate-500 flex items-center gap-1">
             <Clock size={12} />
             最近同步: {task.lastSyncTime}
             {task.status === "warning" && (
-              <span className="text-amber-600 font-bold ml-1">
-                ·{" "}
-                {task.skippedCount
-                  ? `${task.skippedCount} 个文件被跳过未同步`
-                  : "有文件被跳过未同步"}
-              </span>
+              <div className="relative ml-1" ref={skippedRef}>
+                <button
+                  onClick={() => setShowSkipped((v) => !v)}
+                  className="text-amber-600 font-bold hover:underline flex items-center gap-0.5"
+                  title="查看被跳过的文件"
+                >
+                  ·{" "}
+                  {task.skippedCount
+                    ? `${task.skippedCount} 个文件被跳过未同步`
+                    : "有文件被跳过未同步"}
+                  <ChevronDown
+                    size={12}
+                    className={cn("transition-transform", showSkipped && "rotate-180")}
+                  />
+                </button>
+
+                {showSkipped && (
+                  <div className="absolute left-0 bottom-full mb-2 w-80 max-h-64 overflow-auto rounded-xl border border-amber-200 bg-white shadow-lg z-50 py-2">
+                    <div className="px-3 pb-1.5 text-[11px] font-bold text-slate-700">
+                      被跳过的文件
+                      {task.skippedCount ? `（${task.skippedCount}）` : ""}
+                    </div>
+                    {task.skippedFiles && task.skippedFiles.length > 0 ? (
+                      <ul className="px-3 space-y-1.5">
+                        {task.skippedFiles.map((f, i) => (
+                          <li key={`${f.path}-${i}`} className="leading-snug">
+                            <div className="text-[11px] font-mono text-slate-700 break-all">
+                              {f.path}
+                            </div>
+                            <div className="text-[10px] text-amber-600 break-all">
+                              {f.reason}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="px-3 text-[11px] text-slate-500">
+                        本次同步有文件被跳过，详情请查看日志。
+                      </div>
+                    )}
+                    <button
+                      onClick={() => {
+                        setShowSkipped(false);
+                        onShowLogs(task.id);
+                      }}
+                      className="mt-2 w-full text-left px-3 py-1 text-[11px] font-bold text-blue-600 hover:bg-slate-50"
+                    >
+                      查看完整日志 →
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
-          </span>
+          </div>
           <button
             onClick={() => onShowLogs(task.id)}
             className="text-[12px] font-bold text-blue-600 hover:underline"

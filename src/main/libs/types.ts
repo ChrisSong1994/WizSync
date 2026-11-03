@@ -20,6 +20,7 @@ export interface SyncTask {
   backupRetentionDays?: number; // 备份保留天数，0 或未设置时用默认值 30
   pid?: number; // 当前 Unison 进程 ID
   skippedCount?: number; // 最近一次同步被跳过的文件数（退出码 1 时 > 0）
+  skippedFiles?: { path: string; reason: string }[]; // 被跳过的文件与原因，供卡片展示细节
 }
 
 /** 目录对比结果，与渲染进程 types.d.ts 中的 DiffResult 保持一致 */

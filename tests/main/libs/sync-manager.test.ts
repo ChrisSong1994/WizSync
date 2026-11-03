@@ -518,6 +518,10 @@ describe("SyncManager 退出码语义", () => {
     const saved = syncStore.getTasks().find((t) => t.id === "t-code1");
     expect(saved?.status).toBe("warning");
     expect(saved?.skippedCount).toBe(1);
+    // 跳过明细随状态一起持久化，供卡片点击查看具体文件与原因
+    expect(saved?.skippedFiles).toEqual([
+      { path: "截屏 1.png", reason: "properties changed on both sides" },
+    ]);
   });
 
   it("退出码 0（全部成功）回到 idle 并清空 skippedCount", async () => {
