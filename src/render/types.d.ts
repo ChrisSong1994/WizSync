@@ -6,7 +6,7 @@ export interface SyncTask {
   mode: 'scheduled' | 'manual'
   interval?: number
   direction: 'bidirectional' | 'sourceToTarget' | 'targetToSource'
-  status: 'idle' | 'syncing' | 'error'
+  status: 'idle' | 'syncing' | 'warning' | 'error'
   lastSyncTime?: string
   useParallel?: boolean
   useFat?: boolean
@@ -18,6 +18,7 @@ export interface SyncTask {
   backupPath?: string
   backupRetentionDays?: number
   pid?: number
+  skippedCount?: number
 }
 
 export interface BackupFile {
@@ -70,7 +71,7 @@ export interface ElectronAPI {
   ignorePaths: (taskId: string, filePaths: string[]) => Promise<boolean>
   unignorePath: (taskId: string, filePath: string) => Promise<boolean>
   revealInFileExplorer: (taskId: string, filePath: string, side: 'source' | 'target') => Promise<boolean>
-  onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; sourceStats?: any; targetStats?: any }) => void) => void
+  onSyncStatus: (callback: (data: { id: string; status: SyncTask['status']; lastSyncTime?: string; skippedCount?: number; sourceStats?: any; targetStats?: any }) => void) => void
   onSyncLog: (callback: (data: { id: string; log: string }) => void) => void
   onCompareProgress: (callback: (data: { id: string; count: number }) => void) => void
 }

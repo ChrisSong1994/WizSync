@@ -477,3 +477,89 @@ describe("SyncManager Unison 输出过滤", () => {
     await pending;
   });
 });
+
+describe("SyncManager 退出码语义", () => {
+  /** 取出本次同步写入的全部日志文本 */
+  function loggedText(): string {
+    return vi
+      .mocked(logManager.write)
+      .mock.calls.map((c) => c[1] as string)
+      .join("\n");
+  }
+
+  it("退出码 1（仅跳过文件）记为 warning 而非 error，并在日志里说明跳过原因", async () => {
+    const { src, tgt } = makeDirs();
+    const task = makeTask("t-code1", { sourcePath: src, targetPath: tgt });
+    syncStore.saveTask(task);
+
+    const pending = manager.runSpecificPathSync(task, ["a.png"]);
+    const proc = mockedSpawn.mock.results[mockedSpawn.mock.results.length - 1].value as any;
+
+    proc.stderr.emit(
+      "data",
+      Buffer.from(
+        "Reconciling changes\r\n" +
+        "0 items will be synced, 1 skipped\r\n" +
+        "Synchronization complete\r\n" +
+        "  skipped: 截屏 1.png (properties changed on both sides)\r\n"
+      )
+    );
+
+    proc.emit("close", 1);
+    await pending;
+
+    const all = loggedText();
+    // 跳过原因必须出现在日志中（此前完全没有反馈）
+    expect(all).toContain("[警告] Unison 退出码 1");
+    expect(all).toContain("[警告] 未同步: 截屏 1.png（properties changed on both sides）");
+    // 状态变化必须写日志
+    expect(all).toContain("状态更新: warning");
+    // 退出码 1 不应把任务标记为 error，而是 warning
+    const saved = syncStore.getTasks().find((t) => t.id === "t-code1");
+    expect(saved?.status).toBe("warning");
+    expect(saved?.skippedCount).toBe(1);
+  });
+
+  it("退出码 0（全部成功）回到 idle 并清空 skippedCount", async () => {
+    const { src, tgt } = makeDirs();
+    const task = makeTask("t-code0", {
+      sourcePath: src,
+      targetPath: tgt,
+      status: "warning",
+      skippedCount: 3,
+    });
+    syncStore.saveTask(task);
+
+    const pending = manager.runSpecificPathSync(task, ["c.png"]);
+    const proc = mockedSpawn.mock.results[mockedSpawn.mock.results.length - 1].value as any;
+
+    proc.stderr.emit("data", Buffer.from("Reconciling changes\r\nSynchronization complete\r\n"));
+
+    proc.emit("close", 0);
+    await pending;
+
+    expect(loggedText()).toContain("状态更新: idle");
+    const saved = syncStore.getTasks().find((t) => t.id === "t-code0");
+    expect(saved?.status).toBe("idle");
+    expect(saved?.skippedCount).toBe(0);
+  });
+
+  it("退出码 3（致命错误）标记 error，并写入 [错误] 说明", async () => {
+    const { src, tgt } = makeDirs();
+    const task = makeTask("t-code3", { sourcePath: src, targetPath: tgt });
+    syncStore.saveTask(task);
+
+    const pending = manager.runSpecificPathSync(task, ["b.png"]);
+    const proc = mockedSpawn.mock.results[mockedSpawn.mock.results.length - 1].value as any;
+
+    proc.stderr.emit("data", Buffer.from("Reconciling changes\r\n"));
+
+    proc.emit("close", 3);
+    await pending;
+
+    const all = loggedText();
+    expect(all).toContain("[错误] Unison 退出码 3（致命错误，本次同步未完成）");
+    expect(all).toContain("状态更新: error");
+    expect(syncStore.getTasks().find((t) => t.id === "t-code3")?.status).toBe("error");
+  });
+});

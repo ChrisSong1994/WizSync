@@ -94,10 +94,20 @@ export const LogModal: React.FC<LogModalProps> = ({
   };
 
   const isErrorLine = (line: string) =>
-    (line.toLowerCase().includes("error") && !line.toLowerCase().includes("0 error")) ||
+    line.includes("[错误]") ||
+    line.includes("错误:") ||
+    (line.toLowerCase().includes("error") &&
+      !line.toLowerCase().includes("0 error") &&
+      !line.toLowerCase().includes("no error")) ||
     line.toLowerCase().includes("fatal") ||
     (line.toLowerCase().includes("failed") && !line.toLowerCase().includes("0 failed")) ||
-    line.includes("错误:");
+    // 同步结束但退出码非 0/1（0=成功，1=仅跳过文件，2/3 才是失败）
+    /同步结束 \(代码: (?:[2-9]|\d{2,})\)/.test(line);
+
+  // 警告行（如文件被跳过）：不算失败，但用户需要看得见，用琥珀色区分
+  const isWarningLine = (line: string) =>
+    !isErrorLine(line) &&
+    (line.includes("[警告]") || line.includes("警告: ") || /同步结束 \(代码: 1\)/.test(line));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -166,6 +176,7 @@ export const LogModal: React.FC<LogModalProps> = ({
                 {virtualizer.getVirtualItems().map((item) => {
                   const line = lines[item.index];
                   const isError = isErrorLine(line);
+                  const isWarning = isWarningLine(line);
                   return (
                     <div
                       key={item.key}
@@ -174,6 +185,7 @@ export const LogModal: React.FC<LogModalProps> = ({
                       className={cn(
                         "whitespace-pre-wrap break-all pb-1 text-left text-emerald-400/90",
                         isError && "text-red-400",
+                        isWarning && "text-amber-400",
                         item.index < persistentLineCount && "opacity-80",
                       )}
                       style={{

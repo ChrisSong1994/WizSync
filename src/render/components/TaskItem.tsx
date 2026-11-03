@@ -8,6 +8,7 @@ import {
   ArrowRight,
   ArrowLeftRight,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Loader2,
   FileSearch,
@@ -121,13 +122,17 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 ? "bg-blue-50 text-blue-600"
                 : task.status === "error"
                   ? "bg-red-50 text-red-600"
-                  : "bg-emerald-50 text-emerald-600",
+                  : task.status === "warning"
+                    ? "bg-amber-50 text-amber-600"
+                    : "bg-emerald-50 text-emerald-600",
             )}
           >
             {task.status === "syncing" ? (
               <Loader2 size={28} className="animate-spin" />
             ) : task.status === "error" ? (
               <AlertCircle size={28} />
+            ) : task.status === "warning" ? (
+              <AlertTriangle size={28} />
             ) : (
               <CheckCircle2 size={28} />
             )}
@@ -368,6 +373,14 @@ export const TaskItem: React.FC<TaskItemProps> = ({
           <span className="text-[12px] text-slate-500 flex items-center gap-1">
             <Clock size={12} />
             最近同步: {task.lastSyncTime}
+            {task.status === "warning" && (
+              <span className="text-amber-600 font-bold ml-1">
+                ·{" "}
+                {task.skippedCount
+                  ? `${task.skippedCount} 个文件被跳过未同步`
+                  : "有文件被跳过未同步"}
+              </span>
+            )}
           </span>
           <button
             onClick={() => onShowLogs(task.id)}

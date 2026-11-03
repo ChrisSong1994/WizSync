@@ -126,7 +126,8 @@ export class SyncManager {
     const tasks = syncStore.getTasks();
     const task = tasks.find(t => t.id === taskId);
     
-    // 如果是定时任务且当前处于错误状态（通常是由于之前的离线导致的），则尝试重新启动
+    // 如果是定时任务且当前处于错误状态（通常是由于之前的离线导致的），则尝试重新启动。
+    // 注意：warning 状态的任务同步本身是正常的（只是有文件被跳过），不需要在这里重拉。
     if (task && task.mode === "scheduled" && task.status === "error") {
       this.log(taskId, "[磁盘监控] 检测到磁盘已重连，正在尝试自动恢复同步...");
       this.startTask(task);
@@ -516,6 +517,7 @@ export class SyncManager {
     let scanProgressAnnounced = false; // 扫描阶段是否已提示“文件扫描中”（进度逐文件刷新，只提示一次）
     let needsRetry = false;
     let hasChanges = false; // 标记本次同步是否有文件变动
+    const skippedItems: string[] = []; // 被 Unison 跳过的文件（退出码 1 的来源）
     const lastStatsUpdateTime = new Map<string, number>();
 
     const checkStatus = (text: string) => {
@@ -608,6 +610,11 @@ export class SyncManager {
       if (isScanNoise(t)) return;
 
       if (stream === "stderr" && !isStderrInfoLine(t)) {
+        // 记录被跳过的文件（形如 "skipped: a.png (properties changed on both sides)"）。
+        // 这是 Unison 退出码 1 的唯一来源，close 阶段据此给出明确的日志说明，
+        // 避免"卡片显示 error、日志里却看不到任何线索"。
+        const skipped = /^\s*skipped:\s+(.+?)\s*\((.+)\)\s*$/.exec(t);
+        if (skipped) skippedItems.push(`${skipped[1]}（${skipped[2]}）`);
         this.log(task.id, `警告: ${line}`);
       } else {
         this.log(task.id, line);
@@ -712,7 +719,12 @@ export class SyncManager {
         return;
       }
 
-      const status = code === 0 ? "idle" : "error";
+      // Unison 退出码语义（2.53）：0 = 全部同步成功；1 = 有文件被跳过（如冲突、属性无法统一），
+      // 同步本身正常结束；2 = 传输过程中出现非致命失败；3 = 致命错误。
+      // 1 记为 warning（同步成功但有文件未同步），而不是 error，也不是静默的 idle：
+      // 此前把 1 记成 error，导致"仅跳过几个文件"时卡片变红、日志里却全是
+      // "Synchronization complete ... 0 failed"，用户完全看不出哪里错了。
+      const status = code === 0 ? "idle" : code === 1 ? "warning" : "error";
       const lastSyncTime = new Date().toLocaleString();
       
       // 优化点：仅在有文件变动，或者距离上次更新超过 10 分钟时才执行昂贵的目录统计
@@ -721,7 +733,7 @@ export class SyncManager {
       const shouldUpdateStats = hasChanges || (now - lastUpdate > 10 * 60 * 1000);
 
       if (fs.existsSync(task.sourcePath) && fs.existsSync(task.targetPath)) {
-        const updateTaskData: Partial<SyncTask> = { status, lastSyncTime };
+        const updateTaskData: Partial<SyncTask> = { lastSyncTime };
         
         if (shouldUpdateStats) {
           try {
@@ -748,17 +760,44 @@ export class SyncManager {
       }
 
       this.log(task.id, `同步结束 (代码: ${code})${hasChanges ? " [有变动]" : " [无变动]"}`);
-      this.onStatusChange?.();
+
+      // 跳过/失败原因必须落进日志，且状态统一走 updateStatus()：
+      // 保证"状态变了"这件事一定有对应日志，卡片状态与日志永远对得上。
+      if (code === 1) {
+        this.log(
+          task.id,
+          skippedItems.length > 0
+            ? `[警告] Unison 退出码 1：${skippedItems.length} 个文件被跳过未同步（其余文件已同步完成），本次同步按正常结束处理。`
+            : "[警告] Unison 退出码 1：有文件被跳过未同步（其余文件已同步完成），本次同步按正常结束处理。",
+        );
+        skippedItems.forEach((item) => this.log(task.id, `[警告] 未同步: ${item}`));
+      } else if (code !== 0) {
+        const hint =
+          code === 2
+            ? "（传输过程中出现非致命失败，部分文件可能未同步）"
+            : code === 3
+              ? "（致命错误，本次同步未完成）"
+              : "";
+        this.log(task.id, `[错误] Unison 退出码 ${code}${hint}，请检查上方日志或手动处理。`);
+      }
+
+      this.updateStatus(task.id, status, {
+        skippedCount: code === 1 ? skippedItems.length : 0,
+      });
       onDone(true);
     });
 
     return exitPromise;
   }
 
-  private updateStatus(id: string, status: SyncTask["status"]) {
-    syncStore.updateTask(id, { status });
+  private updateStatus(
+    id: string,
+    status: SyncTask["status"],
+    extra: Partial<SyncTask> = {},
+  ) {
+    syncStore.updateTask(id, { status, ...extra });
     this.log(id, `状态更新: ${status}`);
-    this.win?.webContents.send("sync-status", { id, status });
+    this.win?.webContents.send("sync-status", { id, status, ...extra });
     this.onStatusChange?.();
   }
 }

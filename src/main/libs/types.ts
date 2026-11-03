@@ -6,7 +6,8 @@ export interface SyncTask {
   mode: "scheduled" | "manual";
   interval?: number; // 单位：分钟
   direction: "bidirectional" | "sourceToTarget" | "targetToSource";
-  status: "idle" | "syncing" | "error";
+  // warning：同步正常结束，但有文件被跳过未同步（对应 Unison 退出码 1）
+  status: "idle" | "syncing" | "warning" | "error";
   lastSyncTime?: string;
   useParallel?: boolean;
   useFat?: boolean; // FAT 文件系统兼容；默认开启（undefined 视为开启）
@@ -18,6 +19,7 @@ export interface SyncTask {
   backupPath?: string;
   backupRetentionDays?: number; // 备份保留天数，0 或未设置时用默认值 30
   pid?: number; // 当前 Unison 进程 ID
+  skippedCount?: number; // 最近一次同步被跳过的文件数（退出码 1 时 > 0）
 }
 
 /** 目录对比结果，与渲染进程 types.d.ts 中的 DiffResult 保持一致 */

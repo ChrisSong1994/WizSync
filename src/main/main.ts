@@ -229,7 +229,23 @@ app.whenReady().then(() => {
       cleanOldBackups(task.backupPath, getRetentionMs(task));
     });
 
-    tasks.forEach((task) => {
+    // 上次异常退出（崩溃 / 强制结束）时 status 会残留在 "syncing"，pid 也是陈旧值：
+    // 手动任务会永远卡在“同步中”（对比被拒、按钮变成停止），所以启动时统一复位。
+    const staleTasks = syncStore.getTasks().filter(
+      (task) => task.status === "syncing" || task.pid !== undefined,
+    );
+    if (staleTasks.length > 0) {
+      staleTasks.forEach((task) => {
+        syncStore.updateTask(task.id, { status: "idle", pid: undefined });
+      });
+      logManager.write(
+        "global",
+        `[启动] 已复位 ${staleTasks.length} 个残留的“同步中”状态任务: ${staleTasks.map((t) => t.name).join("、")}`,
+      );
+    }
+
+    // 重新读取，避免把复位前的旧快照传给 startTask
+    syncStore.getTasks().forEach((task) => {
       if (task.mode === "scheduled") {
         syncManager.startTask(task);
       }

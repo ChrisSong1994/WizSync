@@ -4,11 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-patchedDependencies:
-  vite-plugin-electron:
-    hash: gyfxaipecby5hb6hroodt65ctq
-    path: patches/vite-plugin-electron.patch
-
 importers:
 
   .:
@@ -67,7 +62,7 @@ importers:
         version: 7.3.6(@types/node@25.5.0)(jiti@1.21.7)
       vite-plugin-electron:
         specifier: ^0.28.4
-        version: 0.28.8(patch_hash=gyfxaipecby5hb6hroodt65ctq)(vite-plugin-electron-renderer@0.14.6)
+        version: 0.28.8(vite-plugin-electron-renderer@0.14.6)
       vite-plugin-electron-renderer:
         specifier: ^0.14.5
         version: 0.14.6
@@ -1248,7 +1243,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Glob versions prior to v9 are no longer supported
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   global-agent@3.0.0:
     resolution: {integrity: sha512-PT6XReJ+D07JvGoxQMkT6qji/jVNfX/h364XHZOWeRzy64sSFr+xJ5OX7LI3b4MPQzdL4H8Y8M0xzPpsVMwA8Q==}
@@ -4272,7 +4267,7 @@ snapshots:
 
   vite-plugin-electron-renderer@0.14.6: {}
 
-  vite-plugin-electron@0.28.8(patch_hash=gyfxaipecby5hb6hroodt65ctq)(vite-plugin-electron-renderer@0.14.6):
+  vite-plugin-electron@0.28.8(vite-plugin-electron-renderer@0.14.6):
     optionalDependencies:
       vite-plugin-electron-renderer: 0.14.6
 

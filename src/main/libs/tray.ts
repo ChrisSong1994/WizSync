@@ -89,13 +89,18 @@ export class TrayManager {
       }
 
       otherTasks.forEach((task) => {
-        const statusIcon = task.status === "error" ? "⚠️" : "📄";
+        const statusIcon =
+          task.status === "error" ? "❌" : task.status === "warning" ? "⚠️" : "📄";
         const statusText =
           task.status === "error"
             ? "同步出错"
-            : task.lastSyncTime
-            ? `上次同步: ${task.lastSyncTime}`
-            : "空闲";
+            : task.status === "warning"
+              ? `${task.skippedCount ? `${task.skippedCount} 个文件被跳过` : "有文件被跳过"}${
+                  task.lastSyncTime ? ` · 上次同步: ${task.lastSyncTime}` : ""
+                }`
+              : task.lastSyncTime
+                ? `上次同步: ${task.lastSyncTime}`
+                : "空闲";
 
         menuTemplate.push({
           label: `${statusIcon} ${task.name}`,
