@@ -109,6 +109,14 @@ function App() {
         }
       }
 
+      // 备份目录被清空（点了"恢复默认"）时回填默认路径
+      if (!currentTask.backupPath && currentTask.targetPath) {
+        currentTask.backupPath = await window.electronAPI.getDefaultBackupPath(
+          currentTask.id!,
+          currentTask.targetPath,
+        );
+      }
+
       let updatedTasks: SyncTask[];
       try {
         updatedTasks = await window.electronAPI.saveTask(currentTask as SyncTask);

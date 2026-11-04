@@ -220,6 +220,61 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </label>
           </div>
 
+          {/* 快速检查开关（默认开启） */}
+          <div className="pt-2">
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <div
+                onClick={() => onChange({ useFastcheck: currentTask?.useFastcheck === false })}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative flex items-center px-1",
+                  currentTask?.useFastcheck !== false ? "bg-blue-600" : "bg-slate-200",
+                )}
+              >
+                <div
+                  className={cn(
+                    "w-4 h-4 bg-white rounded-full shadow-sm transition-all transform",
+                    currentTask?.useFastcheck !== false ? "translate-x-6" : "translate-x-0",
+                  )}
+                />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-slate-700">
+                  快速检查
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  按大小与修改时间判断变更，扫描更快；关闭后逐字节比对，可发现同一秒内的等长修改
+                </span>
+              </div>
+            </label>
+          </div>
+
+          {/* 备份目录（默认在目标目录下的 .wizsync/backups） */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between ml-1">
+              <label className="text-sm font-bold text-slate-700">备份目录</label>
+              {currentTask?.backupPath && (
+                <button
+                  type="button"
+                  onClick={() => onChange({ backupPath: undefined })}
+                  className="text-[11px] font-bold text-slate-400 hover:text-blue-600 transition-colors"
+                >
+                  恢复默认
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => onSelectDir("backupPath")}
+              title={currentTask?.backupPath || "选择备份目录"}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-left text-sm text-slate-600 hover:border-blue-400 transition-colors truncate"
+            >
+              {currentTask?.backupPath || "选择目录（默认：目标目录/.wizsync/backups）"}
+            </button>
+            <p className="text-[11px] text-slate-400 ml-1">
+              被覆盖或删除的旧版本会保存在这里；建议选择空间充足的本地目录
+            </p>
+          </div>
+
           {/* 备份保留期 */}
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-slate-700 ml-1">

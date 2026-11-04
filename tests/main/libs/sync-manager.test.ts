@@ -88,6 +88,8 @@ vi.mock("../../../src/main/libs/fs-utils", async () => {
   );
   return {
     isPathInside: actual.isPathInside,
+    // 整体清空保护依赖真实的忽略名单判断"是否有可同步内容"
+    IGNORE_PATTERNS: actual.IGNORE_PATTERNS,
     getDirStats: vi.fn(async () => ({ size: 0, count: 0 })),
   };
 });
@@ -226,6 +228,8 @@ describe("SyncManager Unison 参数构建", () => {
     expect(args).not.toContain("-terse");
     expect(args).toContain("-prefer");
     expect(args).toContain("newer");
+    // 双向同步保留被覆盖方副本
+    expect(args).toContain("-copyonconflict");
     expect(args).toContain("-ignore");
     expect(args).toContain("Name node_modules");
     expect(args).toContain("-ignore");
@@ -249,8 +253,35 @@ describe("SyncManager Unison 参数构建", () => {
     // -force 已覆盖 -prefer，单向同步不再重复传 -prefer
     expect(args).not.toContain("-prefer");
     expect(args).toContain("-times");
+    // -copyonconflict 与 -force 组合会留下 "(conflict_on_...)" 副本且逐次叠加，
+    // 单向镜像必须去掉它，保证"目标端多余文件被删除"
+    expect(args).not.toContain("-copyonconflict");
 
     finishLastProc();
+  });
+
+  it("targetToSource 单向同样不传 -copyonconflict", async () => {
+    const { src, tgt } = makeDirs();
+    await manager.startTask(
+      makeTask("t-t2s", { sourcePath: src, targetPath: tgt, direction: "targetToSource" })
+    );
+
+    const args = lastArgs();
+    expect(args).toContain("-force");
+    expect(args[args.indexOf("-force") + 1]).toBe(tgt);
+    expect(args).not.toContain("-copyonconflict");
+
+    finishLastProc();
+  });
+
+  it("对比页单文件同步（runSpecificPathSync 指定方向）不传 -copyonconflict", async () => {
+    const { src, tgt } = makeDirs();
+    const task = makeTask("t-single", { sourcePath: src, targetPath: tgt });
+
+    const pending = manager.runSpecificPathSync(task, ["a.txt"], "sourceToTarget");
+    expect(lastArgs()).not.toContain("-copyonconflict");
+    finishLastProc();
+    await pending;
   });
 
   it("配置备份目录时添加 -backup 相关参数", async () => {
@@ -297,6 +328,22 @@ describe("SyncManager Unison 参数构建", () => {
     finishLastProc();
   });
 
+  it("快速检查默认开启，useFastcheck=false 时改为 -fastcheck=false", async () => {
+    const { src, tgt } = makeDirs();
+
+    await manager.startTask(makeTask("t-fc-on", { sourcePath: src, targetPath: tgt }));
+    expect(lastArgs()).toContain("-fastcheck=true");
+    finishLastProc();
+
+    await manager.startTask(
+      makeTask("t-fc-off", { sourcePath: src, targetPath: tgt, useFastcheck: false }),
+    );
+    const args = lastArgs();
+    expect(args).toContain("-fastcheck=false");
+    expect(args).not.toContain("-fastcheck=true");
+    finishLastProc();
+  });
+
   it("FAT 兼容默认开启，useFat=false 时移除 -fat", async () => {
     const { src, tgt } = makeDirs();
 
@@ -325,6 +372,136 @@ describe("SyncManager Unison 参数构建", () => {
 
     finishLastProc();
     await pending;
+  });
+});
+
+describe("SyncManager 整体清空保护", () => {
+  /**
+   * 在任务元数据目录下伪造 unison 归档文件（ar/fp + md5），
+   * 表示"这对目录此前同步过"，从而启用"一侧整体为空"的保护判断。
+   */
+  function seedArchive(taskId: string) {
+    const dir = path.join(mock.userData, "task-data", taskId, "unison");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "ar0123456789abcdef0123456789abcdef"), "");
+  }
+
+  it("已有归档且目标端为空、源端有文件 → 拒绝同步并标记 error", async () => {
+    const { src, tgt } = makeDirs();
+    fs.writeFileSync(path.join(src, "a.txt"), "a");
+    const task = makeTask("t-wipe-tgt", { sourcePath: src, targetPath: tgt });
+    seedArchive(task.id);
+
+    await manager.startTask(task);
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(updateTaskSpy).toHaveBeenLastCalledWith("t-wipe-tgt", { status: "error" });
+    expect(logManager.write).toHaveBeenCalledWith(
+      "t-wipe-tgt",
+      expect.stringContaining("目标目录为空"),
+    );
+  });
+
+  it("已有归档且源端为空、目标端有文件 → 同样拒绝", async () => {
+    const { src, tgt } = makeDirs();
+    fs.writeFileSync(path.join(tgt, "b.txt"), "b");
+    const task = makeTask("t-wipe-src", { sourcePath: src, targetPath: tgt });
+    seedArchive(task.id);
+
+    await manager.startTask(task);
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(logManager.write).toHaveBeenCalledWith(
+      "t-wipe-src",
+      expect.stringContaining("源目录为空"),
+    );
+  });
+
+  it("隐藏文件/node_modules 不计入「有内容」，仍会触发保护", async () => {
+    const { src, tgt } = makeDirs();
+    fs.mkdirSync(path.join(src, "node_modules"));
+    fs.writeFileSync(path.join(src, ".hidden"), "h");
+    fs.writeFileSync(path.join(tgt, "real.txt"), "r");
+    const task = makeTask("t-wipe-noise", { sourcePath: src, targetPath: tgt });
+    seedArchive(task.id);
+
+    await manager.startTask(task);
+
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("首次同步（无归档）一侧为空不拦截", async () => {
+    const { src, tgt } = makeDirs();
+    fs.writeFileSync(path.join(tgt, "b.txt"), "b");
+    const task = makeTask("t-first", { sourcePath: src, targetPath: tgt });
+
+    await manager.startTask(task);
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    finishLastProc();
+  });
+
+  it("单向镜像不做整体清空拦截", async () => {
+    const { src, tgt } = makeDirs();
+    fs.writeFileSync(path.join(tgt, "b.txt"), "b");
+    const task = makeTask("t-mirror", {
+      sourcePath: src,
+      targetPath: tgt,
+      direction: "sourceToTarget",
+    });
+    seedArchive(task.id);
+
+    await manager.startTask(task);
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    finishLastProc();
+  });
+
+  it("-path 局部同步不做整体清空拦截", async () => {
+    const { src, tgt } = makeDirs();
+    fs.writeFileSync(path.join(tgt, "b.txt"), "b");
+    const task = makeTask("t-partial", { sourcePath: src, targetPath: tgt });
+    seedArchive(task.id);
+
+    const pending = manager.runSpecificPathSync(task, ["a.txt"], "sourceToTarget");
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    finishLastProc();
+    await pending;
+  });
+});
+
+describe("SyncManager 备份时间戳修正", () => {
+  it("同步结束后把本次新增的备份文件 mtime 更新为当前时间", async () => {
+    const { src, tgt } = makeDirs();
+    const bak = path.join(tmpDir, "backups");
+    fs.mkdirSync(bak, { recursive: true });
+    // 模拟"同步前已存在的旧备份"，其 mtime 保持不动
+    const existing = path.join(bak, "old-backup.txt");
+    fs.writeFileSync(existing, "old");
+    const oldTime = new Date("2020-01-01T00:00:00Z");
+    fs.utimesSync(existing, oldTime, oldTime);
+
+    const task = makeTask("t-bak-ts", { sourcePath: src, targetPath: tgt, backupPath: bak });
+    const pending = manager.startTask(task);
+    // startTask 内部先 await stopTask 再 spawn，等进程真正起来后再模拟备份写入
+    for (let i = 0; i < 50 && mockedSpawn.mock.calls.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    // unison 进程运行期间写入一个新备份（模拟 -times 复制出的旧 mtime）
+    const fresh = path.join(bak, "fresh-backup.txt");
+    fs.writeFileSync(fresh, "fresh");
+    const versionTime = new Date("2021-06-01T00:00:00Z");
+    fs.utimesSync(fresh, versionTime, versionTime);
+
+    finishLastProc();
+    await pending;
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(fs.statSync(fresh).mtimeMs).toBeGreaterThan(Date.now() - 60_000);
+    // 既有备份不被误改
+    expect(fs.statSync(existing).mtimeMs).toBe(oldTime.getTime());
   });
 });
 

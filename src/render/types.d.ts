@@ -10,6 +10,7 @@ export interface SyncTask {
   lastSyncTime?: string
   useParallel?: boolean
   useFat?: boolean
+  useFastcheck?: boolean
   sourceStats?: { size: number; count: number }
   targetStats?: { size: number; count: number }
   sourceDisk?: { name: string; total: number; free: number }
@@ -60,7 +61,7 @@ export interface ElectronAPI {
   openDevTools: () => Promise<boolean>
   forceReload: () => Promise<boolean>
   getIgnorePatterns: () => Promise<string[]>
-  getDefaultBackupPath: (taskId: string) => Promise<string>
+  getDefaultBackupPath: (taskId: string, targetPath?: string) => Promise<string>
   listBackupFiles: (taskId: string) => Promise<BackupFile[]>
   openBackupFolder: (taskId: string) => Promise<boolean>
   revealBackupFile: (taskId: string, filePath: string) => Promise<boolean>

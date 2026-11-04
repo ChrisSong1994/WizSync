@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { SyncTask } from "./types";
 import { syncStore } from "./sync-store";
-import { getDirStats, isPathInside } from "./fs-utils";
+import { getDirStats, isPathInside, IGNORE_PATTERNS } from "./fs-utils";
 import { diskManager } from "./disk";
 import { getUnisonPath } from "../main";
 import { logManager } from "./logs";
@@ -16,6 +16,42 @@ import { logManager } from "./logs";
 function toUnisonPath(p: string): string {
   return process.platform === "win32" ? p.split(/[\\/]+/).join("/") : p;
 }
+
+/**
+ * 判断目录的顶级条目里是否存在「会被同步」的项。
+ *
+ * 与 unison 的忽略规则保持一致：隐藏文件/目录（-ignore Name .*）、
+ * node_modules / Thumbs.db / desktop.ini 都不计入。
+ * 用于识别「某一侧根目录被整体清空」这一危险状态——此时若直接同步，
+ * unison 会把"对端全部文件已被删除"当作变更传播过去，反向清空另一侧。
+ */
+function hasSyncableEntries(dirPath: string): boolean {
+  try {
+    return fs.readdirSync(dirPath, { withFileTypes: true }).some(
+      (entry) => !entry.name.startsWith(".") && !IGNORE_PATTERNS.includes(entry.name),
+    );
+  } catch {
+    // 目录不可读时按"没有内容"处理，交由调用方的离线/异常分支兜底
+    return false;
+  }
+}
+
+/**
+ * 判断任务是否已有 Unison 归档（ar<md5> / fp<md5>）。
+ * 首次同步没有归档，此时"一侧为空"是正常情况（首次复制），不能拦截。
+ */
+function hasUnisonArchive(metadataDir: string): boolean {
+  try {
+    return fs.readdirSync(metadataDir).some((name) => /^(ar|fp)[0-9a-f]{16,}$/i.test(name));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 备份目录快照上限：超过后放弃"修正时间戳"（大备份目录下避免每次同步都全量遍历）
+ */
+const BACKUP_SNAPSHOT_LIMIT = 20000;
 
 /**
  * 同步管理器类 (SyncManager)
@@ -186,6 +222,75 @@ export class SyncManager {
     await this.cleanUnisonArchives(task);
     this.log(task.id, "缓存清理完成，正在重新初始化同步...");
     this.startTask(task);
+  }
+
+  /**
+   * 记录备份目录当前的「文件 → mtime」快照（超过上限则放弃，返回 null）。
+   * 用于在同步结束后识别本次新增的备份文件。
+   */
+  private snapshotBackupDir(dir: string): Map<string, number> | null {
+    const snapshot = new Map<string, number>();
+    const walk = (current: string): boolean => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(current, { withFileTypes: true });
+      } catch {
+        return true;
+      }
+      for (const entry of entries) {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          if (!walk(full)) return false;
+        } else if (entry.isFile()) {
+          if (snapshot.size >= BACKUP_SNAPSHOT_LIMIT) return false;
+          try {
+            snapshot.set(full, fs.statSync(full).mtimeMs);
+          } catch {
+            // 单个文件读取失败忽略
+          }
+        }
+      }
+      return true;
+    };
+    return walk(dir) ? snapshot : null;
+  }
+
+  /**
+   * 把本次同步新增（或内容被改写）的备份文件 mtime 更新为当前时间。
+   *
+   * unison 的 -times 会让备份沿用被覆盖版本的 mtime（用户视角这是"版本时间"，合理），
+   * 但备份保留期清理按 mtime 判断，导致刚产生备份的老文件被当成过期文件删除。
+   * 因此保留期只应作用于"备份产生时间"：这里把新增备份的 mtime 改为当前时间。
+   */
+  private refreshBackupTimestamps(dir: string, snapshot: Map<string, number>): void {
+    const now = new Date();
+    const walk = (current: string) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(current, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        try {
+          const before = snapshot.get(full);
+          const after = fs.statSync(full).mtimeMs;
+          // 快照中不存在 = 本次新增；mtime 变化 = 本次被覆盖写入同一备份名
+          if (before === undefined || before !== after) {
+            fs.utimesSync(full, now, now);
+          }
+        } catch {
+          // 单个文件处理失败不影响同步结果
+        }
+      }
+    };
+    walk(dir);
   }
 
   private cleanUnisonArchives(task: SyncTask): Promise<void> {
@@ -391,17 +496,44 @@ export class SyncManager {
       return Promise.resolve(false);
     }
 
+    // 「一侧根目录被整体清空」保护（对应 unison 的 confirmbigdel 语义，但给出可操作提示）。
+    // 典型场景：SD 卡/移动硬盘拔插后挂载点复用、卷被重新格式化——目录还在但内容为空。
+    // 若不拦截，unison 会把"对端文件都被删除"当作变更传播，反向清空另一侧，造成数据丢失。
+    //
+    // 仅在「全量协调」时检查：对比页的单文件/批量 -path 同步只作用于指定路径，
+    // 一侧为空可能只是 -path 落在另一侧，此时拦截会误伤正常操作。
+    const taskDataDir = this.getTaskDataDir(task.id);
+    const metadataDir = path.join(taskDataDir, "unison");
+    const isFullTreeSync = !specificPaths || specificPaths.length === 0;
+    // 单向镜像（-force）下"一侧为空"是用户明确表达的意图（把目标刷成源端的模样），
+    // 不拦截；双向同步下才视为磁盘异常。
+    const isMirror = (overrideDirection || task.direction) !== "bidirectional";
+    if (isFullTreeSync && !isMirror && hasUnisonArchive(metadataDir)) {
+      const srcEmpty = !hasSyncableEntries(task.sourcePath);
+      const tgtEmpty = !hasSyncableEntries(task.targetPath);
+      if (srcEmpty !== tgtEmpty) {
+        const emptySide = srcEmpty ? "源目录" : "目标目录";
+        const otherSide = srcEmpty ? "目标目录" : "源目录";
+        const errMsg =
+          `同步中止：检测到${emptySide}为空，而${otherSide}仍有文件。\n` +
+          `这通常是磁盘未正确挂载或目录被整体清空导致的。若继续同步，另一侧的文件会被当作"已删除"传播出去。\n` +
+          `请确认磁盘挂载正常后重试。若确实要把文件同步删除，请在「对比差异」中删除对应文件（该操作按路径执行，不受此限制）。`;
+        console.error(errMsg);
+        this.log(task.id, `[错误] ${errMsg}`);
+        this.updateStatus(task.id, "error");
+        return Promise.resolve(false);
+      }
+    }
+
     this.updateStatus(task.id, "syncing");
 
     const args = [
       "-batch",
-      "-copyonconflict",
       "-ignoreinodenumbers",
       "-dontchmod",
       "-perms", "0", // 必须与 -dontchmod 搭配：unison 要求 dontchmod 时 perms=0，否则拒绝启动 (exit 3)
       "-owner=false",
       "-group=false",
-      "-fastcheck=true",
       "-ui", "text",
       "-ignore", "Name .*",
       "-ignore", "Name node_modules",
@@ -412,11 +544,21 @@ export class SyncManager {
       "-confirmbigdel=false", // 自动确认大批量删除，防止挂起
     ];
 
+    // 快速检查：默认开启（大小 + 整秒 mtime），大数据量下扫描快；
+    // 关闭后每次做全量内容哈希，可识别"同一秒内等长修改"这类 fastcheck 会漏掉的变更。
+    args.push(task.useFastcheck === false ? "-fastcheck=false" : "-fastcheck=true");
+
     // FAT 文件系统兼容（默认开启，面向 FAT/exFAT 移动卷；大小写敏感卷可关闭）
     if (task.useFat !== false) args.push("-fat");
 
     // 根据同步方向优化策略
     const currentDirection = overrideDirection || task.direction;
+
+    // -copyonconflict 只在双向同步时使用。
+    // 它与 -force（单向镜像 / 对比页「使用某端版本」）组合时，unison 不会删除被覆盖方的
+    // 文件，而是保留为 "xxx (conflict_on_YYYY-MM-DD).txt"；下一次同步又会把该副本再复制
+    // 一份，文件名不断叠加。单向同步的语义是"强镜像"，被覆盖方多余文件应直接删除。
+    if (currentDirection === "bidirectional") args.push("-copyonconflict");
 
     if (currentDirection === "sourceToTarget") {
       // 单向 = 强镜像：-force 让源端在所有差异（含删除）中获胜。
@@ -474,10 +616,9 @@ export class SyncManager {
     args.push(task.targetPath);
 
     const unisonPath = getUnisonPath();
-    
+
     // 关键：将 Unison 元数据存储在应用数据目录下的任务专用文件夹中
-    const taskDataDir = this.getTaskDataDir(task.id);
-    const metadataDir = path.join(taskDataDir, "unison");
+    // （taskDataDir / metadataDir 已在清空校验时计算，这里确保目录存在即可）
     if (!fs.existsSync(metadataDir)) {
       fs.mkdirSync(metadataDir, { recursive: true });
     }
@@ -500,6 +641,11 @@ export class SyncManager {
 
     // 打印完整 unison 命令行，便于排查同步问题
     this.log(task.id, `[Unison] 命令: ${unisonPath} ${args.join(" ")}`);
+
+    // 备份快照：-times 会让备份文件沿用被覆盖版本的原始 mtime，
+    // 而保留期清理按 mtime 判断，刚备份的老文件会在下次启动被误删。
+    // 这里记录同步前备份目录的既有文件，close 时只把「新增的备份」mtime 改为当前时间。
+    const backupSnapshot = task.backupPath ? this.snapshotBackupDir(task.backupPath) : null;
 
     const proc = spawn(unisonPath, args, { env });
     this.activeProcesses.set(task.id, proc);
@@ -795,6 +941,10 @@ export class SyncManager {
 
         syncStore.updateTask(task.id, updateTaskData);
         this.sendToRenderer("sync-status", { id: task.id, ...updateTaskData });
+      }
+
+      if (backupSnapshot && task.backupPath && fs.existsSync(task.backupPath)) {
+        this.refreshBackupTimestamps(task.backupPath, backupSnapshot);
       }
 
       this.log(task.id, `同步结束 (代码: ${code})${hasChanges ? " [有变动]" : " [无变动]"}`);

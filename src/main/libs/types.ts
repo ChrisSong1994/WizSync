@@ -11,6 +11,9 @@ export interface SyncTask {
   lastSyncTime?: string;
   useParallel?: boolean;
   useFat?: boolean; // FAT 文件系统兼容；默认开启（undefined 视为开启）
+  // 快速检查（大小 + 整秒 mtime）默认开启。关闭后 unison 每次都做全量内容哈希：
+  // 能识别"同一秒内、等长"的修改（fastcheck 会漏检），代价是大数据量下扫描明显变慢。
+  useFastcheck?: boolean;
   sourceStats?: { size: number; count: number };
   targetStats?: { size: number; count: number };
   sourceDisk?: { name: string; total: number; free: number };

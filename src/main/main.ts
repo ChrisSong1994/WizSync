@@ -175,8 +175,13 @@ app.on("before-quit", async (e) => {
   // Windows 兜底：确保所有残留 Unison 进程都被终止
   killAllUnisonWindows();
   
-  // 清理完成后再次触发退出
-  app.quit();
+  // 清理完成后直接退出。
+  // 这里不能用 app.quit()：它只是再次发出 before-quit → 由于 isQuitting 已经为 true，
+  // 事件被直接放行，但实测（开发模式与打包产物）进程会卡住不退出——
+  // 典型场景是收到 SIGTERM（系统关机 / kill / 守护进程管理）后常驻在"退出前清理"阶段。
+  // app.exit() 会跳过剩余的 before-quit 处理，直接退出进程；setImmediate 让当前
+  // 微任务队列先跑完，避免在事件回调里同步销毁窗口。
+  setImmediate(() => app.exit(0));
 });
 
 app.whenReady().then(() => {
@@ -353,6 +358,23 @@ function canonicalRoot(p: string): string {
   try { return fs.realpathSync(p); } catch { return path.resolve(p); }
 }
 
+/**
+ * canonicalRoot 的宽容版：路径不存在时，向上找到最近存在的祖先做 realpath，
+ * 再拼回剩余片段。用于校验"尚未创建的备份目录"是否位于同步根目录内部。
+ */
+function canonicalRootAllowingMissing(p: string): string {
+  const resolved = path.resolve(p);
+  const missing: string[] = [];
+  let current = resolved;
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return resolved;
+    missing.unshift(path.basename(current));
+    current = parent;
+  }
+  return path.join(canonicalRoot(current), ...missing);
+}
+
 /** 判断两个根目录是否重叠（相等或存在父子嵌套关系，含 symlink 解析） */
 function rootsOverlap(a: string, b: string): boolean {
   const ca = canonicalRoot(a);
@@ -401,23 +423,50 @@ ipcMain.handle("show-confirm", async (_event, message: string) => {
   return result.response === 1;
 });
 
-ipcMain.handle("get-default-backup-path", (_event, taskId: string) => {
-  const tasks = syncStore.getTasks();
-  const task = tasks.find(t => t.id === taskId);
-  if (task?.targetPath) {
-    return path.join(task.targetPath, ".wizsync", "backups");
-  }
-  return path.join(app.getPath("userData"), "backups", taskId);
-});
+ipcMain.handle(
+  "get-default-backup-path",
+  (_event, taskId: string, targetPath?: string) => {
+    // 新建任务尚未落盘，渲染进程会把表单里选好的目标目录一并传进来
+    const task = syncStore.getTasks().find((t) => t.id === taskId);
+    const target = targetPath || task?.targetPath;
+    if (target) {
+      return path.join(target, ".wizsync", "backups");
+    }
+    return path.join(app.getPath("userData"), "backups", taskId);
+  },
+);
 
 ipcMain.handle("save-task", async (_event, task: SyncTask) => {
   // 跨任务根目录重叠校验（realpath 解析，防 symlink 别名/父子嵌套导致的并发写入）
   const rootConflict = findRootConflict(task);
   if (rootConflict) throw new Error(rootConflict);
 
-  if (!task.backupPath && task.targetPath) {
-    task.backupPath = path.join(task.targetPath, ".wizsync", "backups");
+  const defaultBackupPath = task.targetPath
+    ? path.join(task.targetPath, ".wizsync", "backups")
+    : undefined;
+  if (!task.backupPath) {
+    task.backupPath = defaultBackupPath;
   }
+
+  // 备份目录若落在同步根目录内（默认的 <目标>/.wizsync/backups 除外），
+  // 备份文件本身会被当作待同步内容反向灌到另一端，且与 -ignore Path .wizsync 无关。
+  // 这里直接拒绝，避免用户选到根目录内某个普通子目录时产生大量无意义同步。
+  if (task.backupPath) {
+    // 备份目录可能尚未创建，用离它最近的存在祖先做 realpath 归一化
+    const backupReal = canonicalRootAllowingMissing(task.backupPath);
+    const insideSource = isPathInside(canonicalRoot(task.sourcePath), backupReal);
+    const insideTarget = isPathInside(canonicalRoot(task.targetPath), backupReal);
+    const isDefaultUnderTarget =
+      !!defaultBackupPath &&
+      backupReal === canonicalRootAllowingMissing(defaultBackupPath);
+    if ((insideSource || insideTarget) && !isDefaultUnderTarget) {
+      throw new Error(
+        `备份目录不能位于同步目录内部：${task.backupPath}\n` +
+          `请选择同步目录之外的目录，或使用默认位置（目标目录/.wizsync/backups）。`,
+      );
+    }
+  }
+
   task.sourceStats = await getDirStats(task.sourcePath);
   task.targetStats = await getDirStats(task.targetPath);
   task.sourceDisk = diskManager.getDiskSpace(task.sourcePath) || undefined;

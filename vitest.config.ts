@@ -12,5 +12,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    // 集成测试会真实派生 Unison 进程（单次同步约 1s），默认 5s 不够
+    testTimeout: 30000,
+    hookTimeout: 30000,
   },
 });

@@ -21,7 +21,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openDevTools: () => ipcRenderer.invoke('open-devtools'),
   forceReload: () => ipcRenderer.invoke('force-reload'),
   getIgnorePatterns: () => ipcRenderer.invoke('get-ignore-patterns'),
-  getDefaultBackupPath: (taskId: string) => ipcRenderer.invoke('get-default-backup-path', taskId),
+  getDefaultBackupPath: (taskId: string, targetPath?: string) =>
+    ipcRenderer.invoke('get-default-backup-path', taskId, targetPath),
   listBackupFiles: (taskId: string) => ipcRenderer.invoke('list-backup-files', taskId),
   openBackupFolder: (taskId: string) => ipcRenderer.invoke('open-backup-folder', taskId),
   revealBackupFile: (taskId: string, filePath: string) => ipcRenderer.invoke('reveal-backup-file', taskId, filePath),
